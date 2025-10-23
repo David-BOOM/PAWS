@@ -1,0 +1,7 @@
+{
+  "dashboard": {
+    "temperature": 23,
+    "humidity": 60,
+    "aqi": "Moderate"
+  }
+}

@@ -41,3 +41,22 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Cache files
+.cache/
+*.cache
+*.tmp
+*.log
+
+# Expo web cache
+web/cache/
+
+# IDE specific files
+.idea/
+*.iml
+
+# Database mock files
+db.json
+
+# Favicon cache
+assets/images/favicon/

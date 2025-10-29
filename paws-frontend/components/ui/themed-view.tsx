@@ -1,11 +1,13 @@
 import React from "react";
 import { StyleSheet, View, ViewProps } from "react-native";
+import { useTheme } from "../theme";
 
 export function ThemedView(props: ViewProps) {
   const { style, ...rest } = props;
-  return <View style={[styles.container, style]} {...rest} />;
+  const { colors } = useTheme();
+  return <View style={[styles.container, { backgroundColor: colors.background }, style]} {...rest} />;
 }
 
 const styles = StyleSheet.create({
-  container: { backgroundColor: "#fff", flex: 1 },
+  container: { flex: 1 },
 });

@@ -1,41 +1,102 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import QuickActionButton from "../components/QuickActionButton";
 import SensorCard from "../components/SensorCard";
+import { useTheme } from "../components/theme";
 import { getDashboardData, triggerQuickAction } from "../services/api";
+
+const DASHBOARD_CACHE_KEY = "cache:dashboard:v1";
+const REQ_TIMEOUT_MS = 3000;
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [lightOn, setLightOn] = useState<boolean>(false);
+  const { colors, effectiveScheme } = useTheme();
 
   useEffect(() => {
-    fetchData();
+    // Instant cache hydrate for faster first paint
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(DASHBOARD_CACHE_KEY);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          setData(cached);
+          setLightOn(Boolean(cached?.lightOn ?? cached?.deviceStatus?.lightOn ?? false));
+          setLoading(false);
+        }
+      } catch {}
+    })();
   }, []);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchData();
+    }, [])
+  );
+
+  const withTimeout = <T,>(p: Promise<T>, ms = REQ_TIMEOUT_MS) =>
+    Promise.race<T>([
+      p,
+      new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
+    ]);
+
   const fetchData = async () => {
+    const shouldShowSpinner = !data;
     try {
-      setLoading(true);
-      const res = await getDashboardData();
+      if (shouldShowSpinner) setLoading(true);
+      const res = await withTimeout(getDashboardData());
       setData(res.data);
+      const initialLight =
+        (res?.data?.lightOn as boolean | undefined) ??
+        (res?.data?.deviceStatus?.lightOn as boolean | undefined) ??
+        false;
+      setLightOn(Boolean(initialLight));
+      // Persist cache
+      AsyncStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(res.data)).catch(() => {});
     } catch (err) {
+      // Keep any cached UI; avoid blocking on failures/timeouts
+      if (shouldShowSpinner) setLoading(false);
       console.error("Error fetching dashboard data", err);
+      return;
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) {
+  const handleToggleLight = async (next: boolean) => {
+    setLightOn(next);
+    try {
+      await triggerQuickAction("toggle_light");
+    } catch (e) {
+      console.error("Error toggling light", e);
+      setLightOn(!next);
+    }
+  };
+
+  const handleResetFood = async () => {
+    try {
+      await triggerQuickAction("reset_food_amount");
+      fetchData();
+    } catch (e) {
+      console.error("Error resetting food amount", e);
+    }
+  };
+
+  if (loading && !data) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text>Loading dashboard...</Text>
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ color: colors.text }}>Loading dashboard...</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>PAWS Dashboard</Text>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.title, { color: colors.text }]}>PAWS Dashboard</Text>
 
       {data && (
         <>
@@ -47,35 +108,42 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Evenly spaced vertical buttons */}
-      <View style={styles.actions}>
-        <QuickActionButton
-          label="Dispense Food"
-          onPress={() => triggerQuickAction("dispense_food")}
-        />
-        <QuickActionButton
-          label="Refill Water"
-          onPress={() => triggerQuickAction("refill_water")}
-        />
-        <QuickActionButton
-          label="Toggle Light"
-          onPress={() => triggerQuickAction("toggle_light")}
-        />
+      <View style={[styles.actions, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <QuickActionButton label="Reset Food Amount" onPress={handleResetFood} />
+        <QuickActionButton label="Dispense Food" onPress={() => triggerQuickAction("dispense_food")} />
+        <QuickActionButton label="Refill Water" onPress={() => triggerQuickAction("refill_water")} />
+        <View style={[styles.controlRow, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Text style={[styles.controlLabel, { color: colors.text }]}>Light</Text>
+          <Switch
+            value={lightOn}
+            onValueChange={handleToggleLight}
+            trackColor={{ false: effectiveScheme === "dark" ? "#4b5563" : "#ccc", true: colors.primary }}
+          />
+        </View>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: "#fff" },
+  container: { flex: 1, padding: 16 },
   title: { fontSize: 22, fontWeight: "bold", marginBottom: 16 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-
-  // Updated layout for evenly distributed buttons
   actions: {
-    flex: 1,
-    marginTop: 30,
-    justifyContent: "space-evenly", // evenly distribute vertically
-    alignItems: "center",
+    marginTop: 20,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
+  controlRow: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  controlLabel: { fontSize: 16, fontWeight: "500" },
 });

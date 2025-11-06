@@ -1,7 +1,13 @@
 import axios from "axios";
 
+// Local development server base URL.
+// For LAN access from real devices (Android/iOS/ESP8266), prefer setting an env var:
+//   EXPO_PUBLIC_API_HOST=http://<YOUR-LAN-IP>:3000
+// Otherwise it falls back to localhost (works on the same machine).
+const HOST = process.env.EXPO_PUBLIC_API_HOST || "http://localhost:3000";
+
 const API = axios.create({
-  baseURL: "http://192.168.128.56:5000/dashboard", // Replace NULL with your backend URL
+  baseURL: HOST,
   timeout: 5000,
 });
 

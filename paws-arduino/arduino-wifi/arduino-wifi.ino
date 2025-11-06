@@ -1,29 +1,36 @@
 #include "WiFiEsp.h"
 #include "SoftwareSerial.h"
 
-// Pins for ESP8266 connection to Mega
-SoftwareSerial esp8266(6, 7); // RX, TX
+// Create a serial connection to the ESP8266
+SoftwareSerial esp8266(2, 3); // RX, TX (connect Arduino pin 2->TX of ESP, 3->RX of ESP)
 
-char ssid[] = "YOUR_WIFI_SSID";     
-char pass[] = "YOUR_WIFI_PASSWORD"; 
+// WiFi credentials
+char ssid[] = "EE3070_P1615_1";     
+char pass[] = "EE3070P1615"; 
+
+// Local IP of your PC (check with ipconfig/ifconfig)
+char server[] = "192.168.1.100";   // Replace with your PC's local IP
+int port = 8080;                   // Port your PC server is listening on
+
 int status = WL_IDLE_STATUS;
-
-char server[] = "192.168.1.100"; // local IP
-int port = 5000;                 // Port
-
 WiFiEspClient client;
 
 void setup() {
-  Serial.begin(9600);      // Serial monitor
-  esp8266.begin(115200);     // ESP8266 baud rate
+  // Initialize serial for debugging
+  Serial.begin(9600);
+  // Initialize serial for ESP module
+  esp8266.begin(9600);
+  
+  // Initialize WiFi library
   WiFi.init(&esp8266);
 
+  // Check for the presence of the ESP8266
   if (WiFi.status() == WL_NO_SHIELD) {
     Serial.println("ESP8266 not detected");
     while (true);
   }
 
-  // Connect to WiFi
+  // Attempt to connect to WiFi
   while (status != WL_CONNECTED) {
     Serial.print("Connecting to ");
     Serial.println(ssid);
@@ -34,29 +41,13 @@ void setup() {
 }
 
 void loop() {
+  // Try to connect to server
   if (client.connect(server, port)) {
     Serial.println("Connected to server");
-
-    // Example JSON data
-    String jsonData = "{\"temperature\": 25.4, \"humidity\": 60}";
-
-    // Send HTTP POST request
-    client.println("POST /data HTTP/1.1");
-    client.print("Host: ");
-    client.println(server);
-    client.println("Content-Type: application/json");
-    client.print("Content-Length: ");
-    client.println(jsonData.length());
-    client.println();
-    client.println(jsonData);
-
-    Serial.println("JSON sent:");
-    Serial.println(jsonData);
-
+    client.println("Hello from Arduino + ESP8266!");
     client.stop();
   } else {
     Serial.println("Connection failed");
   }
-
-  delay(10000); // send every 10 seconds
+  delay(5000); // Send every 5 seconds
 }

@@ -103,8 +103,22 @@ export default function Dashboard() {
           <SensorCard label="Last Meal" value={`${data.lastMeal} g`} />
           <SensorCard label="Air Quality" value={data.aqi} />
           <SensorCard label="Temperature" value={`${data.temperature} °C`} />
-          <SensorCard label="Water Level" value={data.waterLevel} />
-          <SensorCard label="Device Status" value={data.deviceStatus} />
+          <SensorCard label="Water Level" value={String(data.waterLevel ?? "N/A")} />
+          <SensorCard
+            label="Device Status"
+            value={
+              typeof data.deviceStatus === "object" && data.deviceStatus !== null
+                ? [
+                    data.deviceStatus.status ?? undefined,
+                    (data.deviceStatus.lightOn === true || data.deviceStatus.lightOn === false)
+                      ? `Light: ${data.deviceStatus.lightOn ? "On" : "Off"}`
+                      : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(" • ") || "N/A"
+                : String(data.deviceStatus ?? "N/A")
+            }
+          />
         </>
       )}
 

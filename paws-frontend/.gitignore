@@ -57,6 +57,20 @@ web/cache/
 
 # Database mock files
 db.json
+database/
+database/**
+
+# Local dev server logs
+local-db-server.log
+
+# Firebase/Secrets (prevent accidental commits)
+services/firebase.js
+services/firebase.ts
+services/firebase.*.js
+services/firebase.*.ts
+firebase*.json
+secrets/
+secrets/**
 
 # Favicon cache
 assets/images/favicon/

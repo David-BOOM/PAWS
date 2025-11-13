@@ -1,6 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import QuickActionButton from "../components/QuickActionButton";
 import SensorCard from "../components/SensorCard";
@@ -16,20 +15,7 @@ export default function Dashboard() {
   const [lightOn, setLightOn] = useState<boolean>(false);
   const { colors, effectiveScheme } = useTheme();
 
-  useEffect(() => {
-    // Instant cache hydrate for faster first paint
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(DASHBOARD_CACHE_KEY);
-        if (raw) {
-          const cached = JSON.parse(raw);
-          setData(cached);
-          setLightOn(Boolean(cached?.lightOn ?? cached?.deviceStatus?.lightOn ?? false));
-          setLoading(false);
-        }
-      } catch {}
-    })();
-  }, []);
+  // Removed local cache hydration to ensure data is only read from the database server
 
   useFocusEffect(
     React.useCallback(() => {
@@ -54,8 +40,7 @@ export default function Dashboard() {
         (res?.data?.deviceStatus?.lightOn as boolean | undefined) ??
         false;
       setLightOn(Boolean(initialLight));
-      // Persist cache
-      AsyncStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(res.data)).catch(() => {});
+  // Removed cache persistence to keep reads strictly from the database
     } catch (err) {
       // Keep any cached UI; avoid blocking on failures/timeouts
       if (shouldShowSpinner) setLoading(false);

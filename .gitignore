@@ -1,0 +1,39 @@
+# Global ignores for the PAWS repo
+
+# Node / Expo
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.expo/
+.expo-shared/
+dist/
+build/
+web-build/
+
+# Logs
+*.log
+logs/
+
+# Env and secrets
+.env
+.env.*
+*.pem
+*.p12
+*.keystore
+*.key
+*.crt
+*.cert
+*.pfx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code workspace (keep curated files in subfolders)
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Misc
+.tmp/
+.temp/

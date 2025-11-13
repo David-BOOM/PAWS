@@ -4,9 +4,7 @@ import { ActivityIndicator, Dimensions, InteractionManager, ScrollView, StyleShe
 import Svg, { Circle, G, Line, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import SensorCard from "../components/SensorCard";
 import { useTheme } from "../components/theme";
-import sampleEnv from "../sample-data/environment-current.json";
-import sampleSeries from "../sample-data/environment.json";
-import { getDashboardData } from "../services/api";
+import { getEnvironmentCurrent, getEnvironmentSeries } from "../services/api";
 
 const { width: screenWidth } = Dimensions.get("window");
 
@@ -117,36 +115,46 @@ export default function Environment() {
     }, [])
   );
 
-  const safeCurrentFromSeries = (series: { t: string; v: number }[]) =>
-    Array.isArray(series) && series.length ? series[series.length - 1].v : undefined;
+  const [series, setSeries] = useState<{ temperature: SeriesPoint[]; co2: SeriesPoint[]; voc: SeriesPoint[]; methanal: SeriesPoint[] } | null>(null);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await getDashboardData();
-      const api = (res?.data || {}) as EnvData;
-
-      const merged: EnvData = {
-        temperature: api.temperature ?? (sampleEnv as any).temperature ?? safeCurrentFromSeries((sampleSeries as any).temperature),
-        co2: api.co2 ?? (sampleEnv as any).co2 ?? safeCurrentFromSeries((sampleSeries as any).co2),
-        voc: api.voc ?? (sampleEnv as any).voc ?? safeCurrentFromSeries((sampleSeries as any).voc),
-        methanal: api.methanal ?? (sampleEnv as any).methanal ?? safeCurrentFromSeries((sampleSeries as any).methanal),
-        aqi: api.aqi ?? (sampleEnv as any).aqi ?? "—",
-      };
-
-      setData(merged);
+      // Fetch current readings and series strictly from the database server
+      const [curRes, serRes] = await Promise.all([
+        getEnvironmentCurrent().catch((err) => {
+          if (err?.response?.status === 404) {
+            return { data: {} };
+          }
+          throw err;
+        }),
+        getEnvironmentSeries().catch((err) => {
+          if (err?.response?.status === 404) {
+            return { data: {} };
+          }
+          throw err;
+        }),
+      ]);
+      const current = (curRes?.data || {}) as EnvData;
+      const s = (serRes?.data || {}) as any;
+      setSeries({
+        temperature: Array.isArray(s.temperature) ? s.temperature : [],
+        co2: Array.isArray(s.co2) ? s.co2 : [],
+        voc: Array.isArray(s.voc) ? s.voc : [],
+        methanal: Array.isArray(s.methanal) ? s.methanal : [],
+      });
+      setData({
+        temperature: current.temperature,
+        co2: current.co2,
+        voc: current.voc,
+        methanal: current.methanal,
+        aqi: current.aqi,
+      });
     } catch (err: any) {
       console.error("Error fetching environment data:", err?.message || err);
-      const merged: EnvData = {
-        temperature: (sampleEnv as any).temperature ?? safeCurrentFromSeries((sampleSeries as any).temperature),
-        co2: (sampleEnv as any).co2 ?? safeCurrentFromSeries((sampleSeries as any).co2),
-        voc: (sampleEnv as any).voc ?? safeCurrentFromSeries((sampleSeries as any).voc),
-        methanal: (sampleEnv as any).methanal ?? safeCurrentFromSeries((sampleSeries as any).methanal),
-        aqi: (sampleEnv as any).aqi ?? "—",
-      };
-      setData(merged);
-      setError(null);
+      setError("Failed to load environment data from database");
+      setData(null);
     } finally {
       setLoading(false);
     }
@@ -184,30 +192,30 @@ export default function Environment() {
     >
       <Text style={[styles.title, { color: colors.text }]}>Environment Monitoring</Text>
 
-      {ready && (
+      {ready && series && (
         <>
           <LineChart
             title={`Temperature • ${data.temperature} °C`}
             unit="°C"
-            series={(sampleSeries as any).temperature}
+            series={series.temperature}
             lineColor={effectiveScheme === "dark" ? "#60a5fa" : "#2563eb"}
           />
           <LineChart
             title={`CO2 Level • ${data.co2} ppm`}
             unit="ppm"
-            series={(sampleSeries as any).co2}
+            series={series.co2}
             lineColor={effectiveScheme === "dark" ? "#fbbf24" : "#f59e0b"}
           />
           <LineChart
             title={`VOC Level • ${data.voc} ppb`}
             unit="ppb"
-            series={(sampleSeries as any).voc}
+            series={series.voc}
             lineColor={effectiveScheme === "dark" ? "#34d399" : "#10b981"}
           />
           <LineChart
             title={`Methanal (Formaldehyde) • ${data.methanal} ppb`}
             unit="ppb"
-            series={(sampleSeries as any).methanal}
+            series={series.methanal}
             lineColor={effectiveScheme === "dark" ? "#f472b6" : "#db2777"}
           />
         </>

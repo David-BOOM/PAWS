@@ -56,6 +56,13 @@ export default function Dashboard() {
     }
   };
 
+  const formatLastMealTime = (iso?: string) => {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  };
+
   const handleResetFood = async () => {
     try {
       await triggerQuickAction("reset_food_amount");
@@ -80,7 +87,14 @@ export default function Dashboard() {
 
       {data && (
         <>
-          <SensorCard label="Last Meal" value={`${data.lastMeal} g`} />
+          <SensorCard
+            label="Last Meal"
+            value={(() => {
+              const lastMealAmount = data.lastMeal != null ? `${data.lastMeal} g` : "Not recorded";
+              const lastMealTimeText = formatLastMealTime(data.lastMealTime);
+              return lastMealTimeText ? `${lastMealAmount} • ${lastMealTimeText}` : lastMealAmount;
+            })()}
+          />
           <SensorCard label="Air Quality" value={data.aqi} />
           <SensorCard label="Temperature" value={`${data.temperature} °C`} />
           <SensorCard label="Water Level" value={String(data.waterLevel ?? "N/A")} />

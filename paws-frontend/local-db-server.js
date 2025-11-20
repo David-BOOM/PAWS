@@ -258,10 +258,12 @@ app.post("/actions", asyncHandler(async (req, res) => {
     }
     case "dispense_food": {
       nextDashboard.lastMeal = Number(nextDashboard.lastMeal || 0) + 20;
+      nextDashboard.lastMealTime = new Date().toISOString();
       break;
     }
     case "reset_food_amount": {
       nextDashboard.lastMeal = 0;
+      nextDashboard.lastMealTime = null;
       break;
     }
     case "refill_water": {

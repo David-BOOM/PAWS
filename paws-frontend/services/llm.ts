@@ -7,10 +7,36 @@ export type LlmMessage = {
 };
 
 const llmSecrets = getLlmSecrets();
-const DEFAULT_LLM_HOST = "http://127.0.0.1:1234";
-const LLM_BASE_URL = process.env.EXPO_PUBLIC_LLM_HOST || llmSecrets.host || DEFAULT_LLM_HOST;
-const MODEL_ID = llmSecrets.model || "qwen/qwen3-4b-thinking-2507";
-const TEMPERATURE = typeof llmSecrets.temperature === "number" ? llmSecrets.temperature : 0.7;
+const resolvedHost = process.env.EXPO_PUBLIC_LLM_HOST || llmSecrets.host;
+
+if (!resolvedHost) {
+  throw new Error(
+    "Missing LLM host. Set EXPO_PUBLIC_LLM_HOST or define llm.host inside config/secrets.json."
+  );
+}
+
+const LLM_BASE_URL = resolvedHost;
+
+const resolvedModel = process.env.EXPO_PUBLIC_LLM_MODEL || llmSecrets.model;
+if (!resolvedModel) {
+  throw new Error(
+    "Missing LLM model. Set EXPO_PUBLIC_LLM_MODEL or define llm.model inside config/secrets.json."
+  );
+}
+
+const resolvedTemperature =
+  process.env.EXPO_PUBLIC_LLM_TEMPERATURE !== undefined
+    ? Number(process.env.EXPO_PUBLIC_LLM_TEMPERATURE)
+    : llmSecrets.temperature;
+
+if (typeof resolvedTemperature !== "number" || Number.isNaN(resolvedTemperature)) {
+  throw new Error(
+    "Missing LLM temperature. Set EXPO_PUBLIC_LLM_TEMPERATURE or define llm.temperature inside config/secrets.json."
+  );
+}
+
+const MODEL_ID = resolvedModel;
+const TEMPERATURE = resolvedTemperature;
 
 const THINK_BLOCK_REGEX = /<think>[\s\S]*?<\/think>/gi;
 

@@ -97,7 +97,7 @@ export default function Feeding() {
         }
       };
       load();
-    }, [computeDefaultMealAmount])
+    }, [computeDefaultMealAmount, dbWeight])
   );
 
   React.useEffect(() => {

@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Dimensions, InteractionManager, ScrollView, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, G, Line, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import SensorCard from "../components/SensorCard";
@@ -42,10 +42,16 @@ const LineChart = React.memo(function LineChart({
     return [minV - extra, maxV + extra];
   }, [values]);
 
-  const toX = (i: number) => pad.left + (i * (width - pad.left - pad.right)) / Math.max(series.length - 1, 1);
-  const toY = (v: number) => pad.top + ((yMax - v) * (height - pad.top - pad.bottom)) / (yMax - yMin || 1);
+  const toX = useCallback(
+    (i: number) => pad.left + (i * (width - pad.left - pad.right)) / Math.max(series.length - 1, 1),
+    [pad.left, pad.right, width, series.length]
+  );
+  const toY = useCallback(
+    (v: number) => pad.top + ((yMax - v) * (height - pad.top - pad.bottom)) / (yMax - yMin || 1),
+    [pad.top, pad.bottom, height, yMax, yMin]
+  );
 
-  const points = useMemo(() => series.map((p, i) => `${toX(i)},${toY(p.v)}`).join(" "), [series, yMin, yMax]);
+  const points = useMemo(() => series.map((p, i) => `${toX(i)},${toY(p.v)}`).join(" "), [series, toX, toY]);
   const gridColor = effectiveScheme === "dark" ? "#475569" : "#e5e7eb";
   const axisColor = effectiveScheme === "dark" ? "#94a3b8" : "#6b7280";
   const textColor = colors.text;

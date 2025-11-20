@@ -4,13 +4,25 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 
 ## Get started
 
-1. Install dependencies
+### 1. Configure secrets
+
+1. Copy `config/secrets.example.json` from the repo root to `config/secrets.json` (this file is git-ignored).
+2. Fill in your local values for the LLM endpoint, Wi-Fi credentials, and server host/port.
+3. Generate the Arduino header that the firmware uses for Wi-Fi/IP information:
+
+   ```bash
+   node paws-arduino/arduino-wifi/scripts/sync-secrets.mjs
+   ```
+
+   Re-run this script whenever the JSON changes so the derived header stays current.
+
+### 2. Install dependencies
 
    ```bash
    npm install
    ```
 
-2. Start the app
+### 3. Start the app
 
    ```bash
    npx expo start

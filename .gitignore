@@ -24,6 +24,8 @@ logs/
 *.crt
 *.cert
 *.pfx
+config/secrets.json
+paws-arduino/arduino-wifi/include/generated-secrets.h
 
 # OS files
 .DS_Store

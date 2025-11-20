@@ -1,12 +1,11 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import QuickActionButton from "../components/QuickActionButton";
 import SensorCard from "../components/SensorCard";
 import { useTheme } from "../components/theme";
 import { getDashboardData, triggerQuickAction } from "../services/api";
 
-const DASHBOARD_CACHE_KEY = "cache:dashboard:v1";
 const REQ_TIMEOUT_MS = 3000;
 
 export default function Dashboard() {
@@ -14,22 +13,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [lightOn, setLightOn] = useState<boolean>(false);
   const { colors, effectiveScheme } = useTheme();
-
-  // Removed local cache hydration to ensure data is only read from the database server
-
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchData();
-    }, [])
-  );
-
-  const withTimeout = <T,>(p: Promise<T>, ms = REQ_TIMEOUT_MS) =>
-    Promise.race<T>([
-      p,
-      new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
-    ]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     const shouldShowSpinner = !data;
     try {
       if (shouldShowSpinner) setLoading(true);
@@ -40,16 +24,27 @@ export default function Dashboard() {
         (res?.data?.deviceStatus?.lightOn as boolean | undefined) ??
         false;
       setLightOn(Boolean(initialLight));
-  // Removed cache persistence to keep reads strictly from the database
+      // Removed cache persistence to keep reads strictly from the database
     } catch (err) {
-      // Keep any cached UI; avoid blocking on failures/timeouts
       if (shouldShowSpinner) setLoading(false);
       console.error("Error fetching dashboard data", err);
       return;
     } finally {
       setLoading(false);
     }
-  };
+  }, [data]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  const withTimeout = <T,>(p: Promise<T>, ms = REQ_TIMEOUT_MS) =>
+    Promise.race<T>([
+      p,
+      new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
+    ]);
 
   const handleToggleLight = async (next: boolean) => {
     setLightOn(next);

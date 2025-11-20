@@ -1,19 +1,20 @@
 #include <WiFiEsp.h>
 #include <ArduinoJson.h>
+#include "include/generated-secrets.h"
 
 //################################################################
 //###                USER CONFIGURATION                        ###
 //################################################################
 
-// Your WiFi network credentials
-char ssid[] = "EE3070_P1615_1";       // Your network SSID (name)
-char pass[] = "EE3070P1615";   // Your network password
+// Your WiFi network credentials (populated from config/secrets.json)
+char ssid[] = SECRET_WIFI_SSID;
+char pass[] = SECRET_WIFI_PASS;
 
 // Your Node.js server's IP address and port
 // Find this by running 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
 // on the computer running the server.
-char server[] = "192.168.0.131"; // <--- CHANGE THIS
-int serverPort = 4100;
+char server[] = SECRET_SERVER_HOST;
+int serverPort = SECRET_SERVER_PORT;
 
 //################################################################
 //###                HARDWARE SETUP                          ###

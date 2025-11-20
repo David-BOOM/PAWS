@@ -50,8 +50,8 @@ function ThemedTabs() {
         <Tabs.Screen name="feeding" options={{ title: "Feeding" }} />
         <Tabs.Screen name="environment" options={{ title: "Environment" }} />
         <Tabs.Screen name="notifications" options={{ title: "Notifications" }} />
-        <Tabs.Screen name="settings" options={{ title: "Settings" }} />
         <Tabs.Screen name="modal" options={{ title: "Summery" }} />
+        <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       </Tabs>
       <StatusBar style={effectiveScheme === "dark" ? "light" : "dark"} />
     </>

@@ -2,13 +2,14 @@ import { useFocusEffect } from "@react-navigation/native";
 import React, { useState } from "react";
 import { Alert, Button, StyleSheet, Text, TextInput, View } from "react-native";
 import { useTheme } from "../components/theme";
-import { getDashboardData, readDatabaseFile, setFeedingSchedule } from "../services/api";
+import { getDashboardData, getEnvironmentCurrent, readDatabaseFile, setFeedingSchedule } from "../services/api";
 
 export default function Feeding() {
   const [weightInput, setWeightInput] = useState("");
   const [dbWeight, setDbWeight] = useState<string | null>(null);
   const [mealAmountInput, setMealAmountInput] = useState("");
   const [dbMealAmount, setDbMealAmount] = useState<string | null>(null);
+  const [liveWeight, setLiveWeight] = useState<string | null>(null);
   const [mealAmountTouched, setMealAmountTouched] = useState(false);
   const [meal1Time, setMeal1Time] = useState("");
   const [meal2Time, setMeal2Time] = useState("");
@@ -26,13 +27,28 @@ export default function Feeding() {
     return Number.isInteger(meal) ? String(meal) : meal.toFixed(2);
   }, []);
 
+  const formatWeightForDisplay = React.useCallback((value: any) => {
+    const numeric = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+    const rounded = Number(numeric.toFixed(2));
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toString();
+  }, []);
+
   useFocusEffect(
     React.useCallback(() => {
       const load = async () => {
         try {
-          const [dashboardRes, feedingRes] = await Promise.all([
+          const [dashboardRes, feedingRes, envRes] = await Promise.all([
             getDashboardData(),
             readDatabaseFile("feeding").catch((err) => {
+              if (err?.response?.status === 404) {
+                return { data: {} };
+              }
+              throw err;
+            }),
+            getEnvironmentCurrent().catch((err) => {
               if (err?.response?.status === 404) {
                 return { data: {} };
               }
@@ -42,6 +58,15 @@ export default function Feeding() {
 
           const dashboard = (dashboardRes?.data || {}) as any;
           const feedingData = (feedingRes?.data || {}) as any;
+          const environmentCurrent = (envRes?.data || {}) as any;
+
+          const liveWeightValue =
+            environmentCurrent?.petWeight ??
+            environmentCurrent?.weight ??
+            environmentCurrent?.currentWeight ??
+            null;
+          const formattedLiveWeight = formatWeightForDisplay(liveWeightValue);
+          setLiveWeight(formattedLiveWeight);
 
           const storedWeight =
             feedingData?.weight ??
@@ -58,6 +83,9 @@ export default function Feeding() {
             setWeightInput(storedWeightStr);
           } else {
             setDbWeight(null);
+            if (formattedLiveWeight) {
+              setWeightInput(formattedLiveWeight);
+            }
           }
 
           const feedingTimes = Array.isArray(dashboard?.feedingTimes) ? dashboard.feedingTimes : [];
@@ -82,7 +110,7 @@ export default function Feeding() {
               : null;
           setDbMealAmount(storedMealAmount);
 
-          const fallbackMeal = computeDefaultMealAmount(storedWeightStr ?? dbWeight);
+          const fallbackMeal = computeDefaultMealAmount(storedWeightStr ?? formattedLiveWeight ?? dbWeight);
           setMealAmountInput(storedMealAmount ?? fallbackMeal ?? "");
 
           const hasSchedule = Boolean((meal1 && meal2) || storedMealAmount);
@@ -97,17 +125,17 @@ export default function Feeding() {
         }
       };
       load();
-    }, [computeDefaultMealAmount, dbWeight])
+    }, [computeDefaultMealAmount, dbWeight, formatWeightForDisplay])
   );
 
   React.useEffect(() => {
     if (dbMealAmount !== null || mealAmountTouched) {
       return;
     }
-    const fallback = computeDefaultMealAmount((weightInput && weightInput.trim()) ? weightInput : dbWeight);
+    const fallback = computeDefaultMealAmount((weightInput && weightInput.trim()) ? weightInput : (liveWeight ?? dbWeight));
     if (!fallback) return;
     setMealAmountInput((prev) => (prev.trim().length ? prev : fallback));
-  }, [dbMealAmount, mealAmountTouched, computeDefaultMealAmount, weightInput, dbWeight]);
+  }, [dbMealAmount, mealAmountTouched, computeDefaultMealAmount, weightInput, dbWeight, liveWeight]);
 
   const validateTime = (t: string) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(t.trim());
 
@@ -150,7 +178,7 @@ export default function Feeding() {
     }
   };
 
-  const currentWeightDisplay = dbWeight ?? (weightInput ? weightInput : "N/A");
+  const currentWeightDisplay = liveWeight ?? dbWeight ?? (weightInput ? weightInput : "N/A");
   const resolvedMealAmount = ((dbMealAmount ?? mealAmountInput) || "").trim();
   const mealAmountDisplay = resolvedMealAmount
     ? (/[^0-9.]/.test(resolvedMealAmount) ? resolvedMealAmount : `${resolvedMealAmount} g`)
@@ -163,7 +191,7 @@ export default function Feeding() {
       {/* Weight section */}
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Pet Weight</Text>
-        <Text style={[styles.muted, { color: colors.text }]}>{`Current weight: ${currentWeightDisplay}`}</Text>
+        <Text style={[styles.muted, { color: colors.text }]}>{`Real-time weight: ${currentWeightDisplay}`}</Text>
         <TextInput
           style={[styles.input, { borderColor: colors.border, backgroundColor: colors.background, color: colors.text }]}
           placeholder="Weight (kg)"

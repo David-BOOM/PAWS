@@ -14,6 +14,7 @@ type EnvData = {
   voc?: number;
   methanal?: number;
   aqi?: string | number;
+  humidity?: number;
 };
 
 type SeriesPoint = { t: string; v: number };
@@ -74,7 +75,7 @@ const LineChart = React.memo(function LineChart({
               <G key={`grid-${idx}`}>
                 <Line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={gridColor} strokeWidth={1} />
                 <SvgText x={pad.left - 8} y={y + 4} fill={axisColor} fontSize="10" textAnchor="end">
-                  {Math.round(v)}
+                  {Number.isFinite(v) ? v.toFixed(1) : "0.0"}
                 </SvgText>
               </G>
             );
@@ -104,7 +105,7 @@ const LineChart = React.memo(function LineChart({
 });
 
 export default function Environment() {
-  const [data, setData] = useState<EnvData | null>(null);
+  const [currentData, setCurrentData] = useState<EnvData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -150,17 +151,18 @@ export default function Environment() {
         voc: Array.isArray(s.voc) ? s.voc : [],
         methanal: Array.isArray(s.methanal) ? s.methanal : [],
       });
-      setData({
+      setCurrentData({
         temperature: current.temperature,
         co2: current.co2,
         voc: current.voc,
         methanal: current.methanal,
         aqi: current.aqi,
+        humidity: (current as any).humidity,
       });
     } catch (err: any) {
       console.error("Error fetching environment data:", err?.message || err);
       setError("Failed to load environment data from database");
-      setData(null);
+      setCurrentData(null);
     } finally {
       setLoading(false);
     }
@@ -183,7 +185,7 @@ export default function Environment() {
     );
   }
 
-  if (!data) {
+  if (!currentData) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
         <Text style={{ color: colors.text }}>No environment data available</Text>
@@ -198,36 +200,61 @@ export default function Environment() {
     >
       <Text style={[styles.title, { color: colors.text }]}>Environment Monitoring</Text>
 
-      {ready && series && (
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Current Environment</Text>
+        <Text style={[styles.sectionDescription, { color: colors.text }]}>
+          Live readings uploaded from the habitat controller.
+        </Text>
+      </View>
+
+      <View style={styles.currentGrid}>
+        <SensorCard label="Temperature" value={currentData.temperature !== undefined ? `${currentData.temperature} °C` : "--"} />
+        <SensorCard label="Humidity" value={currentData.humidity !== undefined ? `${currentData.humidity}%` : "--"} />
+        <SensorCard label="CO2" value={currentData.co2 !== undefined ? `${currentData.co2} ppm` : "--"} />
+        <SensorCard label="Methanal" value={currentData.methanal !== undefined ? `${currentData.methanal} ppb` : "--"} />
+        <SensorCard label="VOC" value={currentData.voc !== undefined ? `${currentData.voc} ppb` : "--"} />
+        <SensorCard label="Air Quality Index" value={currentData.aqi !== undefined ? `${currentData.aqi}` : "--"} />
+      </View>
+
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Past Environment</Text>
+        <Text style={[styles.sectionDescription, { color: colors.text }]}>
+          Rolling history from the last few hours stored in the local database.
+        </Text>
+      </View>
+
+      {ready && series ? (
         <>
           <LineChart
-            title={`Temperature • ${data.temperature} °C`}
+            title={`Temperature • ${currentData.temperature ?? "--"} °C`}
             unit="°C"
             series={series.temperature}
             lineColor={effectiveScheme === "dark" ? "#60a5fa" : "#2563eb"}
           />
           <LineChart
-            title={`CO2 Level • ${data.co2} ppm`}
+            title={`CO2 Level • ${currentData.co2 ?? "--"} ppm`}
             unit="ppm"
             series={series.co2}
             lineColor={effectiveScheme === "dark" ? "#fbbf24" : "#f59e0b"}
           />
           <LineChart
-            title={`VOC Level • ${data.voc} ppb`}
+            title={`VOC Level • ${currentData.voc ?? "--"} ppb`}
             unit="ppb"
             series={series.voc}
             lineColor={effectiveScheme === "dark" ? "#34d399" : "#10b981"}
           />
           <LineChart
-            title={`Methanal (Formaldehyde) • ${data.methanal} ppb`}
+            title={`Methanal (Formaldehyde) • ${currentData.methanal ?? "--"} ppb`}
             unit="ppb"
             series={series.methanal}
             lineColor={effectiveScheme === "dark" ? "#f472b6" : "#db2777"}
           />
         </>
+      ) : (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={{ color: colors.text }}>No historical readings captured yet.</Text>
+        </View>
       )}
-
-      <SensorCard label="Air Quality Index" value={`${data.aqi}`} />
     </ScrollView>
   );
 }
@@ -244,4 +271,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardTitle: { fontSize: 16, fontWeight: "600", marginBottom: 6 },
+  sectionHeader: { marginBottom: 12 },
+  sectionTitle: { fontSize: 18, fontWeight: "600" },
+  sectionDescription: { fontSize: 13, opacity: 0.75 },
+  currentGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    marginBottom: 20,
+  },
 });

@@ -39,6 +39,11 @@ type ParsedContext = {
   feedingSchedule?: Record<string, any>;
   environment?: Record<string, any>;
   recentNotifications?: Record<string, any>[];
+  environmentHistory?: Record<string, any>[];
+  analysis?: Record<string, any>;
+  waterEvents?: Record<string, any>[];
+  feedingHistory?: Record<string, any>[];
+  weightHistory?: Record<string, any>[];
 };
 
 const parseContextSnapshot = (snapshot: string): ParsedContext | null => {
@@ -79,6 +84,9 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
   const notifications = Array.isArray(context.recentNotifications)
     ? context.recentNotifications
     : [];
+  const analysis = context.analysis ?? {};
+  const weightHistory = Array.isArray(context.weightHistory) ? context.weightHistory : [];
+  const waterEvents = Array.isArray(context.waterEvents) ? context.waterEvents : [];
 
   if (dashboard.lastMeal !== undefined) {
     const when = formatRelativeTime(dashboard.lastMealTime);
@@ -107,6 +115,19 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
 
   if (dashboard.petWeight) {
     bullets.push(`Weight: ${dashboard.petWeight} kg`);
+  }
+
+  if (weightHistory.length) {
+    const first = weightHistory[0];
+    const last = weightHistory[weightHistory.length - 1];
+    const firstWeight = Number(first?.weight);
+    const lastWeight = Number(last?.weight);
+    if (Number.isFinite(firstWeight) && Number.isFinite(lastWeight)) {
+      const diff = Number((lastWeight - firstWeight).toFixed(2));
+      const trendLabel = diff === 0 ? "stable" : diff > 0 ? `+${diff} kg` : `${diff} kg`;
+      const lastTs = formatRelativeTime(last?.ts) ?? last?.ts;
+      bullets.push(`Weight trend (${lastTs || "latest"}): ${lastWeight} kg (${trendLabel})`);
+    }
   }
 
   if (dashboard.temperature || environment.temperature) {
@@ -139,6 +160,35 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
     const latest = notifications[0];
     if (latest?.message) {
       bullets.push(`Latest alert: ${latest.message}${latest.time ? ` (${latest.time})` : ""}`);
+    }
+  }
+
+  if (analysis?.water) {
+    const waterAnalysis = analysis.water;
+    if (waterAnalysis.warning) {
+      bullets.push(`Water warning: ${waterAnalysis.warning}`);
+    } else if (waterAnalysis.mostFrequentTime) {
+      bullets.push(`Water intake usually happens around ${waterAnalysis.mostFrequentTime}.`);
+    }
+  }
+
+  if (analysis?.food) {
+    const foodAnalysis = analysis.food;
+    if (foodAnalysis.foodWarning) {
+      bullets.push("Food intake is below plan today. Please inspect the feeder.");
+    } else if (foodAnalysis.todayTotal) {
+      bullets.push(
+        `Today's food consumption: ${foodAnalysis.todayTotal} g (expected ${foodAnalysis.expectedFoodConsumption} g).`
+      );
+    }
+  }
+
+  if (waterEvents.length) {
+    const latestWaterEvent = waterEvents[waterEvents.length - 1];
+    if (latestWaterEvent?.state === "low") {
+      bullets.push("Latest water sensor reading is LOW.");
+    } else if (Number.isFinite(latestWaterEvent?.delta)) {
+      bullets.push(`Recent drink detected: ${latestWaterEvent.delta} % drop in reservoir.`);
     }
   }
 
@@ -210,7 +260,17 @@ export default function Summery() {
     setContextLoading(true);
     setContextError(null);
     try {
-      const [dashboardRes, environmentRes, feedingRes, notificationsRes] = await Promise.all([
+      const [
+        dashboardRes,
+        environmentRes,
+        feedingRes,
+        notificationsRes,
+        environmentHistoryRes,
+        analysisRes,
+        waterEventsRes,
+        feedingHistoryRes,
+        weightHistoryRes,
+      ] = await Promise.all([
         getDashboardData(),
         getEnvironmentCurrent().catch((err: any) => {
           if (err?.response?.status === 404) return { data: {} };
@@ -221,6 +281,26 @@ export default function Summery() {
           throw err;
         }),
         getNotifications().catch(() => ({ data: [] })),
+        readDatabaseFile("environment-history").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("analysis").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: {} };
+          throw err;
+        }),
+        readDatabaseFile("water-events").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("feeding-history").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("weight-history").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
       ]);
 
       const snapshot = {
@@ -228,6 +308,13 @@ export default function Summery() {
         dashboard: dashboardRes?.data ?? {},
         feedingSchedule: feedingRes?.data ?? {},
         environment: environmentRes?.data ?? {},
+        environmentHistory: Array.isArray(environmentHistoryRes?.data)
+          ? environmentHistoryRes.data
+          : [],
+        analysis: analysisRes?.data ?? {},
+        waterEvents: Array.isArray(waterEventsRes?.data) ? waterEventsRes.data : [],
+        feedingHistory: Array.isArray(feedingHistoryRes?.data) ? feedingHistoryRes.data : [],
+        weightHistory: Array.isArray(weightHistoryRes?.data) ? weightHistoryRes.data : [],
         recentNotifications: Array.isArray(notificationsRes?.data)
           ? (notificationsRes.data as any[]).slice(0, 5)
           : [],

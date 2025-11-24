@@ -1,254 +1,231 @@
-#include <WiFiEsp.h>
-#include <ArduinoJson.h>
-#include "include/generated-secrets.h"
+/*
+ * Arduino Mega 2560 + ESP8266 WiFi data uploader
+ * ------------------------------------------------
+ *  - Uses Serial1 for ESP8266 (pins 18/19)
+ *  - Reads Wi-Fi / server secrets from include/generated-secrets.h
+ *  - Collects sensor readings (replace stubs with your actual sensors)
+ *  - Sends JSON payloads to the local Node.js JSON database via HTTP PATCH
+ */
 
-//################################################################
-//###                USER CONFIGURATION                        ###
-//################################################################
+#include "WiFiEsp.h"
+#include "./include/generated-secrets.h"
 
-// Your WiFi network credentials (populated from config/secrets.json)
-char ssid[] = SECRET_WIFI_SSID;
-char pass[] = SECRET_WIFI_PASS;
+#ifndef HAVE_HWSERIAL1
+  #error "This sketch requires HardwareSerial1 (e.g., Arduino Mega 2560)"
+#endif
 
-// Your Node.js server's IP address and port
-// Find this by running 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
-// on the computer running the server.
-char server[] = SECRET_SERVER_HOST;
-int serverPort = SECRET_SERVER_PORT;
+// --- Configuration ---------------------------------------------------------
 
-//################################################################
-//###                HARDWARE SETUP                          ###
-//################################################################
+static constexpr unsigned long kSampleIntervalMs = 5000UL; // 5 seconds
+static constexpr uint32_t kEspBaudRate = 115200;
+static constexpr char kTargetEndpoint[] = "/api/files/environment-current";
 
-// We will use 'Serial1' on the Mega (Pins 18, 19) for the ESP8266.
-// This is much more stable than SoftwareSerial.
-//
-// Wiring:
-// ESP-TX  ->  Mega Pin 19 (RX1)
-// ESP-RX  ->  Mega Pin 18 (TX1)
-// ESP-VCC ->  3.3V
-// ESP-GND ->  GND
-// ESP-CH_PD -> 3.3V
-//
-HardwareSerial& espSerial = Serial1;
+// Optional: map analog pins used for mock data (replace with your sensors)
+static constexpr uint8_t PIN_LIGHT_SENSOR = A0;
+static constexpr uint8_t PIN_WATER_SENSOR = A1;
+static constexpr uint8_t PIN_WEIGHT_SENSOR = A2;
 
-// Initialize the WiFi client library
 WiFiEspClient client;
+unsigned long lastUploadMs = 0;
 
-// Define a buffer for reading HTTP responses
-char responseBuffer[1024];
+// --- Sensor placeholders ---------------------------------------------------
+
+float readTemperatureCelsius() {
+  // TODO: Replace with the real temperature sensor read (e.g., DHT, DS18B20)
+  return 24.0f + (analogRead(PIN_LIGHT_SENSOR) / 1023.0f) * 6.0f;
+}
+
+float readHumidityPercent() {
+  // TODO: Replace with the real humidity sensor read
+  return 55.0f + (analogRead(PIN_LIGHT_SENSOR) / 1023.0f) * 10.0f;
+}
+
+int readLightLevelRaw() {
+  // Example: LDR connected to analog pin
+  return analogRead(PIN_LIGHT_SENSOR);
+}
+
+int readVocPpb() {
+  // TODO: Replace with VOC sensor logic (e.g., CCS811)
+  return 150 + (analogRead(PIN_LIGHT_SENSOR) % 50);
+}
+
+int readCo2Ppm() {
+  // TODO: Replace with CO2 sensor logic (e.g., MH-Z19)
+  return 600 + (analogRead(PIN_LIGHT_SENSOR) % 120);
+}
+
+float readMethanalPpb() {
+  // TODO: Replace with formaldehyde sensor logic
+  return 45.0f + (analogRead(PIN_LIGHT_SENSOR) / 1023.0f) * 10.0f;
+}
+
+bool isWaterLevelLow() {
+  // Water float switch / digital sensor: LOW = water present?, adjust to your wiring
+  return digitalRead(PIN_WATER_SENSOR) == LOW;
+}
+
+String readWaterLevelState() {
+  return isWaterLevelLow() ? String(F("low")) : String(F("high"));
+}
+
+float readPetWeightKg() {
+  // TODO: Replace with actual load-cell reading (e.g., HX711). This stub simulates 8-13 kg.
+  const int raw = analogRead(PIN_WEIGHT_SENSOR);
+  return 8.0f + (raw / 1023.0f) * 5.0f;
+}
+
+// --- Networking helpers ----------------------------------------------------
+
+void printWifiStatus() {
+  Serial.print(F("SSID: "));
+  Serial.println(WiFi.SSID());
+
+  Serial.print(F("IP Address: "));
+  Serial.println(WiFi.localIP());
+
+  Serial.print(F("Signal strength (RSSI): "));
+  Serial.print(WiFi.RSSI());
+  Serial.println(F(" dBm"));
+}
+
+void ensureWifiConnected() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  Serial.print(F("Connecting to WiFi SSID: "));
+  Serial.println(SECRET_WIFI_SSID);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    int status = WiFi.begin(SECRET_WIFI_SSID, SECRET_WIFI_PASS);
+    if (status == WL_CONNECTED) {
+      Serial.println(F("WiFi connected."));
+      printWifiStatus();
+      break;
+    }
+
+    Serial.println(F("Retrying WiFi connection in 2 seconds..."));
+    delay(2000);
+  }
+}
+
+String buildSensorJsonPayload() {
+  const float temperature = readTemperatureCelsius();
+  const float humidity = readHumidityPercent();
+  const int lightLevel = readLightLevelRaw();
+  const int voc = readVocPpb();
+  const int co2 = readCo2Ppm();
+  const float methanal = readMethanalPpb();
+  const bool waterLow = isWaterLevelLow();
+  const int waterLevel = waterLow ? 0 : 100;
+  const String waterState = readWaterLevelState();
+  const float petWeight = readPetWeightKg();
+
+  String payload;
+  payload.reserve(256);
+  payload += F("{");
+  payload += F("\"temperature\": ");
+  payload += String(temperature, 2);
+  payload += F(", \"humidity\": ");
+  payload += String(humidity, 1);
+  payload += F(", \"light\": ");
+  payload += lightLevel;
+  payload += F(", \"voc\": ");
+  payload += voc;
+  payload += F(", \"co2\": ");
+  payload += co2;
+  payload += F(", \"methanal\": ");
+  payload += String(methanal, 2);
+  payload += F(", \"waterLevel\": ");
+  payload += waterLevel;
+  payload += F(", \"waterLevelState\": \"");
+  payload += waterState;
+  payload += F("\"");
+  payload += F(", \"petWeight\": ");
+  payload += String(petWeight, 2);
+  payload += F("}");
+
+  return payload;
+}
+
+void logServerResponse() {
+  unsigned long start = millis();
+  while (client.connected() && millis() - start < 2000UL) {
+    while (client.available()) {
+      Serial.write(client.read());
+      start = millis(); // Reset timeout whenever data arrives
+    }
+  }
+}
+
+bool postJsonToServer(const String &payload) {
+  Serial.print(F("Connecting to server "));
+  Serial.print(SECRET_SERVER_HOST);
+  Serial.print(F(":"));
+  Serial.println(SECRET_SERVER_PORT);
+
+  client.stop();
+  if (!client.connect(SECRET_SERVER_HOST, SECRET_SERVER_PORT)) {
+    Serial.println(F("[Error] Unable to connect to server"));
+    return false;
+  }
+
+  Serial.println(F("Connected. Sending payload..."));
+
+  client.print(F("PATCH "));
+  client.print(kTargetEndpoint);
+  client.println(F(" HTTP/1.1"));
+
+  client.print(F("Host: "));
+  client.println(SECRET_SERVER_HOST);
+
+  client.println(F("User-Agent: Arduino-WiFiEsp/1.0"));
+  client.println(F("Content-Type: application/json"));
+  client.println(F("Connection: close"));
+
+  client.print(F("Content-Length: "));
+  client.println(payload.length());
+  client.println(); // End of headers
+  client.print(payload);
+
+  logServerResponse();
+  client.stop();
+  Serial.println(F("Payload delivered."));
+  Serial.println(payload);
+  return true;
+}
+
+// --- Arduino lifecycle -----------------------------------------------------
 
 void setup() {
-  // 1. Initialize Serial Monitor for debugging
   Serial.begin(115200);
-  while (!Serial) { ; } // Wait for serial port to connect
+  while (!Serial) {
+    ;
+  }
 
-  // 2. Initialize Serial1 for communication with ESP8266
-  // Note: Your ESP8266 must be set to this baud rate (115200 is common)
-  // If connection fails, try 9600.
-  espSerial.begin(115200);
+  Serial1.begin(kEspBaudRate);
+  WiFi.init(&Serial1);
 
-  // 3. Initialize the WiFi module
-  Serial.println("Initializing ESP8266 module...");
-  WiFi.init(&espSerial);
+  pinMode(PIN_WATER_SENSOR, INPUT_PULLUP);
+  pinMode(PIN_WEIGHT_SENSOR, INPUT);
 
-  // Check for presence of the ESP8266
   if (WiFi.status() == WL_NO_SHIELD) {
-    Serial.println("ESP8266 WiFi module not found!");
-    while (true); // Don't continue
+    Serial.println(F("ESP8266 shield not detected. Halt."));
+    while (true) {
+      delay(1000);
+    }
   }
 
-  // 4. Attempt to connect to WiFi
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
-  
-  int status = WL_IDLE_STATUS;
-  while (status != WL_CONNECTED) {
-    status = WiFi.begin(ssid, pass);
-    Serial.print(".");
-    delay(1000);
-  }
-
-  // 5. Connection successful
-  Serial.println("\nWiFi connected!");
-  printWifiStatus();
-
-  Serial.println("\nSetup complete. Starting main loop...");
+  ensureWifiConnected();
 }
 
 void loop() {
-  // Example 1: GET data from the server
-  Serial.println("\n--------------------");
-  Serial.println("Fetching /dashboard data...");
-  getDashboardData();
-  
-  delay(5000); // Wait 5 seconds
-
-  // Example 2: POST a JSON action to the server
-  Serial.println("\n--------------------");
-  Serial.println("Sending 'toggle_light' action...");
-  sendAction("toggle_light");
-
-  delay(5000); // Wait 5 seconds
-}
-
-/**
- * @brief Performs an HTTP GET request to the /dashboard endpoint
- */
-void getDashboardData() {
-  // Connect to the server
-  if (client.connect(server, serverPort)) {
-    Serial.println("Connected to server.");
-    
-    // Make an HTTP GET request
-    client.println("GET /dashboard HTTP/1.1");
-    client.print("Host: ");
-    client.println(server);
-    client.println("Connection: close");
-    client.println(); // End of headers
-
-  } else {
-    Serial.println("Connection to server failed!");
-    return;
-  }
-
-  // Wait for the server to respond (with a timeout)
-  unsigned long startTime = millis();
-  while (client.available() == 0) {
-    if (millis() - startTime > 5000) { // 5 second timeout
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      return;
+  if (millis() - lastUploadMs >= kSampleIntervalMs) {
+    ensureWifiConnected();
+    const String payload = buildSensorJsonPayload();
+    if (postJsonToServer(payload)) {
+      lastUploadMs = millis();
     }
   }
-
-  // --- Read the HTTP Response ---
-  bool headersEnded = false;
-  String httpBody = "";
-
-  while (client.available()) {
-    String line = client.readStringUntil('\n');
-    line.trim(); // Remove \r
-
-    if (!headersEnded) {
-      // Look for the blank line that separates headers from body
-      if (line.length() == 0) {
-        headersEnded = true;
-      }
-    } else {
-      // This is the body
-      httpBody += line;
-    }
-  }
-  client.stop();
-
-  Serial.println("Server response body:");
-  Serial.println(httpBody);
-
-  // --- Parse the JSON Response ---
-  // Use a StaticJsonDocument. 1024 bytes should be enough for the dashboard.
-  StaticJsonDocument<1024> doc;
-
-  DeserializationError error = deserializeJson(doc, httpBody);
-
-  if (error) {
-    Serial.print("deserializeJson() failed: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Extract data from the JSON
-  // Using .as<type>() is safer if the key might be missing
-  bool lightOn = doc["lightOn"].as<bool>();
-  const char* waterLevel = doc["waterLevel"] | "unknown"; // Default value
-  int lastMeal = doc["lastMeal"] | -1; // Default value
-
-  Serial.println("--- Parsed Dashboard Data ---");
-  Serial.print("Light Status: ");
-  Serial.println(lightOn ? "ON" : "OFF");
-  Serial.print("Water Level: ");
-  Serial.println(waterLevel);
-  Serial.print("Last Meal Amount: ");
-  Serial.println(lastMeal);
-  Serial.println("-----------------------------");
-}
-
-
-/**
- * @brief Performs an HTTP POST request to the /actions endpoint
- * @param action The action string to send (e.g., "toggle_light")
- */
-void sendAction(const char* action) {
-  // 1. Create the JSON payload to send
-  StaticJsonDocument<128> doc;
-  doc["action"] = action;
-  
-  String payload;
-  serializeJson(doc, payload);
-
-  // 2. Connect to the server
-  if (client.connect(server, serverPort)) {
-    Serial.println("Connected to server for POST.");
-
-    // 3. Send the HTTP POST request headers
-    client.println("POST /actions HTTP/1.1");
-    client.print("Host: ");
-    client.println(server);
-    client.println("Content-Type: application/json");
-    client.print("Content-Length: ");
-    client.println(payload.length());
-    client.println("Connection: close");
-    client.println(); // Blank line separates headers from body
-
-    // 4. Send the JSON payload
-    client.println(payload);
-    Serial.print("Sent payload: ");
-    Serial.println(payload);
-
-  } else {
-    Serial.println("Connection to server failed!");
-    return;
-  }
-
-  // 5. Read the server's response (optional, but good for debugging)
-  Serial.println("Server response:");
-  unsigned long startTime = millis();
-  while (client.available() == 0) {
-    if (millis() - startTime > 5000) { // 5 second timeout
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      return;
-    }
-  }
-
-  while (client.available()) {
-    String line = client.readStringUntil('\n');
-    Serial.println(line);
-  }
-  
-  client.stop();
-}
-
-
-/**
- * @brief Prints the current WiFi status to the Serial monitor
- */
-void printWifiStatus() {
-  Serial.println("--- WiFi Status ---");
-  
-  // Print the SSID of the network you're attached to
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
-
-  // Print your device's IP address
-  IPAddress ip = WiFi.localIP();
-  Serial.print("IP Address: ");
-  Serial.println(ip);
-
-  // Print the received signal strength
-  long rssi = WiFi.RSSI();
-  Serial.print("Signal strength (RSSI):");
-  Serial.print(rssi);
-  Serial.println(" dBm");
-  Serial.println("-------------------");
 }

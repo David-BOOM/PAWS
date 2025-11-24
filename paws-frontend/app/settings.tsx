@@ -4,7 +4,6 @@ import { useTheme } from "../components/theme";
 import { updateSettings } from "../services/api";
 
 export default function Settings() {
-  const [circadian, setCircadian] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const { preference, setPreference, effectiveScheme, colors, toggleLightDark } = useTheme();
 
@@ -13,7 +12,7 @@ export default function Settings() {
 
   const handleSave = async () => {
     try {
-      await updateSettings({ circadian, notifications });
+      await updateSettings({ notifications });
       alert("Settings updated!");
     } catch (err) {
       console.error("Error updating settings", err);
@@ -44,13 +43,6 @@ export default function Settings() {
           onPress={toggleLightDark}
           color={colors.primary}
         />
-      </View>
-
-      {/* Existing settings */}
-      <View style={[styles.row, { borderColor: colors.border }]}>
-
-        <Text style={{ color: colors.text }}>Circadian Lighting</Text>
-        <Switch value={circadian} onValueChange={setCircadian} />
       </View>
 
       <View style={[styles.row, { borderColor: colors.border }]}>

@@ -9,6 +9,40 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 app.use(cors());
 
+const ENV_CURRENT_KEY = "environment-current";
+const ENV_HISTORY_FILE = "environment-history";
+const ENV_CHART_FILE = "environment";
+const HISTORY_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+const MIN_RECORD_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes per point
+const MAX_HISTORY_POINTS = 64;
+const METRIC_KEYS = ["temperature", "humidity", "co2", "voc", "methanal", "waterLevel"];
+
+const WATER_EVENTS_FILE = "water-events";
+const WATER_EVENT_WINDOW_MS = 48 * 60 * 60 * 1000; // 2 days
+const WATER_DROP_THRESHOLD = 5; // percentage points
+const MAX_WATER_EVENTS = 200;
+const WATER_TOLERANCE_MINUTES = 15;
+const WATER_LOW_NOTIFICATION = "Water level sensor reports LOW. Please refill the reservoir.";
+
+const FEEDING_HISTORY_FILE = "feeding-history";
+const FEEDING_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_FEEDING_EVENTS = 400;
+const FOOD_EXPECTED_FALLBACK = 200;
+
+const WEIGHT_HISTORY_FILE = "weight-history";
+const WEIGHT_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const WEIGHT_HISTORY_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_WEIGHT_HISTORY_POINTS = 500;
+const WEIGHT_MIN_CHANGE = 0.05;
+
+const ANALYTICS_FILE = "analysis";
+const NOTIFICATIONS_FILE = "notifications";
+const NOTIFICATION_LIMIT = 50;
+const NOTIFICATION_SUPPRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+let lastWaterLevelReading;
+let lastWaterLevelState;
+
 const configFolder = path.resolve(__dirname, "..", "config");
 const secretsPath = path.join(configFolder, "secrets.json");
 const secretsExamplePath = path.join(configFolder, "secrets.example.json");
@@ -81,6 +115,372 @@ const pruneUndefined = (value) => {
     return value;
   }
   return Object.fromEntries(Object.entries(value).filter(([, val]) => typeof val !== "undefined"));
+};
+
+const safelyReadJson = async (name, fallback) => {
+  try {
+    const payload = await readJsonFile(name);
+    return typeof payload === "undefined" ? fallback : payload;
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      return fallback;
+    }
+    throw error;
+  }
+};
+
+const normaliseFileKey = (raw = "") => raw.replace(/\.json$/i, "");
+const isEnvironmentCurrentFile = (raw) => normaliseFileKey(raw) === ENV_CURRENT_KEY;
+
+const sanitizeNumber = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+};
+
+const normalizeWaterState = (value) => {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (["low", "empty", "refill", "0", "off"].includes(normalized)) {
+      return "low";
+    }
+    if (["high", "full", "ok", "normal", "1", "on"].includes(normalized)) {
+      return "high";
+    }
+  }
+  if (typeof value === "boolean") {
+    return value ? "high" : "low";
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value <= 20) return "low";
+    if (value >= 80) return "high";
+  }
+  return null;
+};
+
+const toChartPoints = (history) => {
+  const metrics = ["temperature", "co2", "voc", "methanal"];
+  const formatLabel = (iso) => {
+    try {
+      return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return iso;
+    }
+  };
+
+  return metrics.reduce((acc, metric) => {
+    acc[metric] = history
+      .filter((entry) => typeof entry[metric] === "number")
+      .map((entry) => ({ t: formatLabel(entry.ts), v: entry[metric] }));
+    return acc;
+  }, {});
+};
+
+const ensureArray = (value, fallback = []) => (Array.isArray(value) ? value : fallback);
+
+const writeAnalysisSection = async (section, payload) => {
+  await mergeJsonFile(ANALYTICS_FILE, { [section]: payload });
+};
+
+const appendNotification = async (message, type = "alert") => {
+  if (!message) return;
+  let notifications = ensureArray(await safelyReadJson(NOTIFICATIONS_FILE, []));
+  const existing = notifications.find((entry) => entry?.message === message);
+  if (existing) {
+    const lastTs = Date.parse(existing.time);
+    if (Number.isFinite(lastTs) && Date.now() - lastTs < NOTIFICATION_SUPPRESS_MS) {
+      return;
+    }
+    notifications = notifications.filter((entry) => entry?.message !== message);
+  }
+
+  notifications.unshift({ message, type, time: new Date().toISOString() });
+  notifications = notifications.slice(0, NOTIFICATION_LIMIT);
+  await writeJsonFile(NOTIFICATIONS_FILE, notifications);
+};
+
+const recordWaterIntakeEvent = async (event = {}) => {
+  const deltaValue = sanitizeNumber(event?.delta);
+  const levelAfterValue = sanitizeNumber(event?.levelAfter);
+  const state = typeof event?.state === "string" ? event.state.trim().toLowerCase() : undefined;
+  if (!Number.isFinite(deltaValue) && !state) return;
+  let events = ensureArray(await safelyReadJson(WATER_EVENTS_FILE, []));
+  events.push(
+    pruneUndefined({
+      ts: new Date().toISOString(),
+      delta: Number.isFinite(deltaValue) ? Number(deltaValue.toFixed(1)) : undefined,
+      levelAfter: Number.isFinite(levelAfterValue) ? Number(levelAfterValue.toFixed(1)) : undefined,
+      state,
+    })
+  );
+  const cutoff = Date.now() - WATER_EVENT_WINDOW_MS;
+  events = events
+    .filter((event) => {
+      const ts = Date.parse(event?.ts);
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice(-MAX_WATER_EVENTS);
+  await writeJsonFile(WATER_EVENTS_FILE, events);
+  await runWaterAnalysis(events);
+};
+
+const groupMinutesWithinTolerance = (minutes) => {
+  const grouped = [];
+  const used = new Set();
+  minutes.forEach((base, idx) => {
+    if (used.has(idx)) return;
+    const bucket = [base];
+    used.add(idx);
+    minutes.forEach((comparison, jdx) => {
+      if (used.has(jdx)) return;
+      if (Math.abs(comparison - base) <= WATER_TOLERANCE_MINUTES) {
+        bucket.push(comparison);
+        used.add(jdx);
+      }
+    });
+    grouped.push(bucket);
+  });
+  return grouped;
+};
+
+const runWaterAnalysis = async (eventsInput) => {
+  const events = ensureArray(eventsInput ?? (await safelyReadJson(WATER_EVENTS_FILE, [])));
+  const minutes = events
+    .map((event) => {
+      const ts = Date.parse(event?.ts);
+      if (!Number.isFinite(ts)) return null;
+      const date = new Date(ts);
+      return date.getHours() * 60 + date.getMinutes();
+    })
+    .filter((val) => typeof val === "number");
+
+  const result = {
+    updatedAt: new Date().toISOString(),
+    totalEvents: minutes.length,
+    toleranceMinutes: WATER_TOLERANCE_MINUTES,
+    mostFrequentTime: null,
+    status: minutes.length ? "ok" : "insufficient_data",
+    warning: null,
+  };
+
+  if (minutes.length) {
+    const grouped = groupMinutesWithinTolerance(minutes).sort((a, b) => b.length - a.length);
+    const topGroup = grouped[0];
+    if (topGroup?.length) {
+      const avgMinutes = Math.round(topGroup.reduce((sum, value) => sum + value, 0) / topGroup.length);
+      const hours = String(Math.floor(avgMinutes / 60)).padStart(2, "0");
+      const mins = String(avgMinutes % 60).padStart(2, "0");
+      result.mostFrequentTime = `${hours}:${mins}`;
+    }
+
+    const lastTs = events[events.length - 1]?.ts;
+    if (!lastTs || Date.now() - Date.parse(lastTs) > 12 * 60 * 60 * 1000) {
+      result.warning = "Water intake has not been detected in over 12 hours.";
+      result.status = "warning";
+      await appendNotification(result.warning, "warning");
+    }
+  }
+
+  await writeAnalysisSection("water", result);
+};
+
+const monitorWaterLevel = async (snapshot) => {
+  if (!snapshot || typeof snapshot !== "object") return;
+
+  const numericLevel = sanitizeNumber(snapshot?.waterLevel);
+  if (typeof numericLevel === "number") {
+    if (typeof lastWaterLevelReading === "number") {
+      const delta = lastWaterLevelReading - numericLevel;
+      if (delta >= WATER_DROP_THRESHOLD) {
+        await recordWaterIntakeEvent({ delta, levelAfter: numericLevel });
+      }
+    }
+    lastWaterLevelReading = numericLevel;
+  }
+
+  const state = normalizeWaterState(snapshot?.waterLevelState ?? snapshot?.waterLevel);
+  if (!state) return;
+
+  if (state === "low") {
+    await appendNotification(WATER_LOW_NOTIFICATION, "warning");
+  }
+
+  if (state === "low" && lastWaterLevelState !== "low") {
+    await recordWaterIntakeEvent({ state });
+  }
+
+  lastWaterLevelState = state;
+};
+
+const recordWeightHistory = async (weightKg) => {
+  if (!(typeof weightKg === "number" && Number.isFinite(weightKg) && weightKg > 0)) {
+    return;
+  }
+
+  let history = ensureArray(await safelyReadJson(WEIGHT_HISTORY_FILE, []));
+  const now = Date.now();
+  const lastEntry = history[history.length - 1];
+  const lastTs = lastEntry?.ts ? Date.parse(lastEntry.ts) : NaN;
+  const lastWeight = sanitizeNumber(lastEntry?.weight);
+
+  if (
+    Number.isFinite(lastTs) &&
+    now - lastTs < WEIGHT_HISTORY_INTERVAL_MS &&
+    typeof lastWeight === "number" &&
+    Math.abs(lastWeight - weightKg) < WEIGHT_MIN_CHANGE
+  ) {
+    return;
+  }
+
+  history.push({ ts: new Date(now).toISOString(), weight: Number(weightKg.toFixed(2)) });
+  const cutoff = now - WEIGHT_HISTORY_WINDOW_MS;
+  history = history
+    .filter((entry) => {
+      const ts = Date.parse(entry?.ts);
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice(-MAX_WEIGHT_HISTORY_POINTS);
+
+  await writeJsonFile(WEIGHT_HISTORY_FILE, history);
+};
+
+const maybeRecordWeightSnapshot = async (snapshot) => {
+  if (!snapshot || typeof snapshot !== "object") return;
+  const rawWeight = snapshot.petWeight ?? snapshot.weight ?? snapshot.currentWeight;
+  const weight = sanitizeNumber(rawWeight);
+  if (typeof weight !== "number") return;
+
+  await recordWeightHistory(weight);
+  await mergeJsonFile("dashboard", { petWeight: Number(weight.toFixed(2)) });
+};
+
+const recordFeedingEvent = async (amount) => {
+  if (!(Number.isFinite(amount) && amount > 0)) {
+    return;
+  }
+  let history = ensureArray(await safelyReadJson(FEEDING_HISTORY_FILE, []));
+  history.push({ ts: new Date().toISOString(), amount });
+  const cutoff = Date.now() - FEEDING_HISTORY_WINDOW_MS;
+  history = history
+    .filter((entry) => {
+      const ts = Date.parse(entry?.ts);
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice(-MAX_FEEDING_EVENTS);
+  await writeJsonFile(FEEDING_HISTORY_FILE, history);
+  await runFoodAnalysis(history);
+};
+
+const runFoodAnalysis = async (historyInput) => {
+  const history = ensureArray(historyInput ?? (await safelyReadJson(FEEDING_HISTORY_FILE, [])));
+  const groups = history.reduce((acc, entry) => {
+    const ts = Date.parse(entry?.ts);
+    const amount = sanitizeNumber(entry?.amount);
+    if (!Number.isFinite(ts) || typeof amount !== "number") {
+      return acc;
+    }
+    const key = new Date(ts).toISOString().slice(0, 10);
+    acc[key] = acc[key] || [];
+    acc[key].push(amount);
+    return acc;
+  }, {});
+
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = yesterday.toISOString().slice(0, 10);
+
+  const mean = (arr) => (arr?.length ? arr.reduce((sum, value) => sum + value, 0) / arr.length : 0);
+  const todayMean = mean(groups[todayKey]);
+  const yesterdayMean = mean(groups[yesterdayKey]);
+  const comparePastData = yesterdayMean > 0 ? Number((todayMean / yesterdayMean - 1).toFixed(2)) : null;
+
+  const feedingPlan = (await safelyReadJson("feeding", {})) || {};
+  const plannedMeals = [feedingPlan.meal1Time, feedingPlan.meal2Time, feedingPlan.meal3Time]
+    .filter(Boolean).length || 2;
+  const expectedPerMeal = sanitizeNumber(feedingPlan.mealAmount) ?? FOOD_EXPECTED_FALLBACK;
+  const expectedFoodConsumption = plannedMeals * expectedPerMeal;
+
+  const todayTotalRaw = groups[todayKey]?.reduce((sum, value) => sum + value, 0) ?? 0;
+  const todayTotal = Number(todayTotalRaw.toFixed(1));
+  const foodWarning = todayTotal < expectedFoodConsumption * 0.6;
+
+  const result = {
+    updatedAt: new Date().toISOString(),
+    comparePastData,
+    foodWarning,
+    todayAverage: Number(todayMean.toFixed(1)),
+    yesterdayAverage: Number(yesterdayMean.toFixed(1)),
+    expectedFoodConsumption,
+    todayTotal,
+  };
+
+  if (foodWarning) {
+    await appendNotification("Food intake is below the expected schedule. Please check the feeder.", "warning");
+  }
+
+  await writeAnalysisSection("food", result);
+};
+
+const maybeRecordEnvironmentSnapshot = async (fileName, snapshot) => {
+  if (!isEnvironmentCurrentFile(fileName) || !snapshot || typeof snapshot !== "object") {
+    return;
+  }
+
+  const entry = {
+    ts: new Date().toISOString(),
+  };
+  let hasMetric = false;
+  METRIC_KEYS.forEach((key) => {
+    const numeric = sanitizeNumber(snapshot[key]);
+    if (typeof numeric === "number") {
+      entry[key] = numeric;
+      if (["temperature", "co2", "voc", "methanal"].includes(key)) {
+        hasMetric = true;
+      }
+    }
+  });
+
+  if (!hasMetric) {
+    return;
+  }
+
+  let history = await safelyReadJson(ENV_HISTORY_FILE, []);
+  if (!Array.isArray(history)) {
+    history = [];
+  }
+
+  const nowTs = Date.now();
+  const last = history[history.length - 1];
+  const lastTs = last?.ts ? Date.parse(last.ts) : 0;
+  if (last && nowTs - lastTs < MIN_RECORD_INTERVAL_MS) {
+    history[history.length - 1] = { ...last, ...entry, ts: last.ts };
+  } else {
+    history.push(entry);
+  }
+
+  history = history.filter((item) => {
+    if (!item?.ts) return false;
+    const ts = Date.parse(item.ts);
+    return Number.isFinite(ts) && nowTs - ts <= HISTORY_WINDOW_MS;
+  });
+
+  if (history.length > MAX_HISTORY_POINTS) {
+    history = history.slice(history.length - MAX_HISTORY_POINTS);
+  }
+
+  await writeJsonFile(ENV_HISTORY_FILE, history);
+  await writeJsonFile(ENV_CHART_FILE, toChartPoints(history));
+  await monitorWaterLevel(snapshot);
+  await maybeRecordWeightSnapshot(snapshot);
 };
 
 const readJsonFile = async (name) => {
@@ -166,6 +566,7 @@ app.post("/api/files/:file", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Request body is required");
   }
   const payload = await writeJsonFile(req.params.file, req.body);
+  await maybeRecordEnvironmentSnapshot(req.params.file, payload);
   res.status(201).json({ message: "Saved", data: payload });
 }));
 
@@ -174,6 +575,7 @@ app.put("/api/files/:file", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Request body is required");
   }
   const payload = await writeJsonFile(req.params.file, req.body);
+  await maybeRecordEnvironmentSnapshot(req.params.file, payload);
   res.json({ message: "Replaced", data: payload });
 }));
 
@@ -182,6 +584,7 @@ app.patch("/api/files/:file", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Request body must be a JSON object");
   }
   const payload = await mergeJsonFile(req.params.file, req.body);
+  await maybeRecordEnvironmentSnapshot(req.params.file, payload);
   res.json({ message: "Updated", data: payload });
 }));
 
@@ -269,6 +672,7 @@ app.post("/actions", asyncHandler(async (req, res) => {
   });
 
   const nextDashboard = { ...dashboard };
+  let feedingAmountToRecord = 0;
 
   switch (action) {
     case "toggle_light": {
@@ -278,8 +682,10 @@ app.post("/actions", asyncHandler(async (req, res) => {
       break;
     }
     case "dispense_food": {
-      nextDashboard.lastMeal = Number(nextDashboard.lastMeal || 0) + 20;
+      const dispensedAmount = 20;
+      nextDashboard.lastMeal = Number(nextDashboard.lastMeal || 0) + dispensedAmount;
       nextDashboard.lastMealTime = new Date().toISOString();
+      feedingAmountToRecord = dispensedAmount;
       break;
     }
     case "reset_food_amount": {
@@ -296,6 +702,9 @@ app.post("/actions", asyncHandler(async (req, res) => {
   }
 
   await writeJsonFile("dashboard", nextDashboard);
+  if (feedingAmountToRecord > 0) {
+    await recordFeedingEvent(feedingAmountToRecord);
+  }
 
   const history = await readJsonFile("actions").catch((error) => {
     if (error.status === 404) return [];
@@ -367,6 +776,17 @@ app.use((err, req, res, next) => {
   console.error("Unhandled error", err);
   res.status(500).json({ error: "Internal server error" });
 });
+
+const bootstrapAnalytics = async () => {
+  try {
+    await runWaterAnalysis();
+    await runFoodAnalysis();
+  } catch (error) {
+    console.error("Failed to bootstrap analytics", error);
+  }
+};
+
+bootstrapAnalytics();
 
 const args = process.argv.slice(2);
 const portFromArg = args.find((arg) => arg.startsWith("--port="));

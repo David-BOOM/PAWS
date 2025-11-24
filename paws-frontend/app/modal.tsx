@@ -44,6 +44,10 @@ type ParsedContext = {
   waterEvents?: Record<string, any>[];
   feedingHistory?: Record<string, any>[];
   weightHistory?: Record<string, any>[];
+  motionEvents?: Record<string, any>[];
+  barkEvents?: Record<string, any>[];
+  feederEvents?: Record<string, any>[];
+  activityHistory?: Record<string, any>[];
 };
 
 const parseContextSnapshot = (snapshot: string): ParsedContext | null => {
@@ -87,6 +91,10 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
   const analysis = context.analysis ?? {};
   const weightHistory = Array.isArray(context.weightHistory) ? context.weightHistory : [];
   const waterEvents = Array.isArray(context.waterEvents) ? context.waterEvents : [];
+  const motionEvents = Array.isArray(context.motionEvents) ? context.motionEvents : [];
+  const barkEvents = Array.isArray(context.barkEvents) ? context.barkEvents : [];
+  const feederEvents = Array.isArray(context.feederEvents) ? context.feederEvents : [];
+  const activityHistory = Array.isArray(context.activityHistory) ? context.activityHistory : [];
 
   if (dashboard.lastMeal !== undefined) {
     const when = formatRelativeTime(dashboard.lastMealTime);
@@ -115,6 +123,15 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
 
   if (dashboard.petWeight) {
     bullets.push(`Weight: ${dashboard.petWeight} kg`);
+  }
+
+  if (typeof dashboard.petSleeping === "boolean") {
+    bullets.push(`Pet status: ${dashboard.petSleeping ? "Sleeping" : "Awake"}`);
+  } else if (activityHistory.length) {
+    const latestActivity = activityHistory[activityHistory.length - 1];
+    const sleeping = latestActivity?.sleeping ? "Sleeping" : "Awake";
+    const when = formatRelativeTime(latestActivity?.ts) ?? latestActivity?.ts;
+    bullets.push(`Pet status: ${sleeping}${when ? ` (${when})` : ""}`);
   }
 
   if (weightHistory.length) {
@@ -190,6 +207,34 @@ const buildBulletSummary = (context: ParsedContext | null): string[] => {
     } else if (Number.isFinite(latestWaterEvent?.delta)) {
       bullets.push(`Recent drink detected: ${latestWaterEvent.delta} % drop in reservoir.`);
     }
+  }
+
+  if (motionEvents.length) {
+    const latestMotion = motionEvents[motionEvents.length - 1];
+    const when = formatRelativeTime(latestMotion?.ts) ?? latestMotion?.ts;
+    if (latestMotion?.distance) {
+      bullets.push(`Motion near habitat (${latestMotion.distance} cm)${when ? ` • ${when}` : ""}`);
+    } else {
+      bullets.push(`Motion near habitat${when ? ` • ${when}` : ""}`);
+    }
+  }
+
+  if (barkEvents.length) {
+    const latestBark = barkEvents[barkEvents.length - 1];
+    const when = formatRelativeTime(latestBark?.ts) ?? latestBark?.ts;
+    const count = latestBark?.barkCount ?? "multiple";
+    bullets.push(`Bark events: ${count} detected${when ? ` • ${when}` : ""}`);
+  }
+
+  if (feederEvents.length) {
+    const latestFeeder = feederEvents[feederEvents.length - 1];
+    const when = formatRelativeTime(latestFeeder?.ts) ?? latestFeeder?.ts;
+    const state = latestFeeder?.state ?? "unknown";
+    const weight = Number.isFinite(latestFeeder?.currentWeight)
+      ? `${latestFeeder.currentWeight} g`
+      : null;
+    const detail = weight ? `${state} (${weight})` : state;
+    bullets.push(`Feeder status: ${detail}${when ? ` • ${when}` : ""}`);
   }
 
   return bullets;
@@ -270,6 +315,10 @@ export default function Summery() {
         waterEventsRes,
         feedingHistoryRes,
         weightHistoryRes,
+        motionEventsRes,
+        barkEventsRes,
+        feederEventsRes,
+        activityHistoryRes,
       ] = await Promise.all([
         getDashboardData(),
         getEnvironmentCurrent().catch((err: any) => {
@@ -301,6 +350,22 @@ export default function Summery() {
           if (err?.response?.status === 404) return { data: [] };
           throw err;
         }),
+        readDatabaseFile("motion-events").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("bark-events").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("feeder-events").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
+        readDatabaseFile("activity-history").catch((err: any) => {
+          if (err?.response?.status === 404) return { data: [] };
+          throw err;
+        }),
       ]);
 
       const snapshot = {
@@ -315,6 +380,10 @@ export default function Summery() {
         waterEvents: Array.isArray(waterEventsRes?.data) ? waterEventsRes.data : [],
         feedingHistory: Array.isArray(feedingHistoryRes?.data) ? feedingHistoryRes.data : [],
         weightHistory: Array.isArray(weightHistoryRes?.data) ? weightHistoryRes.data : [],
+        motionEvents: Array.isArray(motionEventsRes?.data) ? motionEventsRes.data : [],
+        barkEvents: Array.isArray(barkEventsRes?.data) ? barkEventsRes.data : [],
+        feederEvents: Array.isArray(feederEventsRes?.data) ? feederEventsRes.data : [],
+        activityHistory: Array.isArray(activityHistoryRes?.data) ? activityHistoryRes.data : [],
         recentNotifications: Array.isArray(notificationsRes?.data)
           ? (notificationsRes.data as any[]).slice(0, 5)
           : [],

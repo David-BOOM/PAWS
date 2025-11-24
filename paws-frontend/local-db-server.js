@@ -29,6 +29,14 @@ const FEEDING_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_FEEDING_EVENTS = 400;
 const FOOD_EXPECTED_FALLBACK = 200;
 
+const MOTION_EVENTS_FILE = "motion-events";
+const BARK_EVENTS_FILE = "bark-events";
+const FEEDER_EVENTS_FILE = "feeder-events";
+const ACTIVITY_HISTORY_FILE = "activity-history";
+const EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_EVENT_LOG = 400;
+const MOTION_DISTANCE_THRESHOLD_CM = 25;
+
 const WEIGHT_HISTORY_FILE = "weight-history";
 const WEIGHT_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const WEIGHT_HISTORY_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -42,6 +50,11 @@ const NOTIFICATION_SUPPRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 let lastWaterLevelReading;
 let lastWaterLevelState;
+let lastMotionLightState;
+let lastBarkAlertState;
+let lastAirQualityAlertState;
+let lastPetSleepingState;
+let lastFeedingState;
 
 const configFolder = path.resolve(__dirname, "..", "config");
 const secretsPath = path.join(configFolder, "secrets.json");
@@ -166,6 +179,12 @@ const normalizeWaterState = (value) => {
   return null;
 };
 
+const normalizeBoolean = (value) => {
+  if (value === true) return true;
+  if (value === false) return false;
+  return undefined;
+};
+
 const toChartPoints = (history) => {
   const metrics = ["temperature", "co2", "voc", "methanal"];
   const formatLabel = (iso) => {
@@ -205,6 +224,23 @@ const appendNotification = async (message, type = "alert") => {
   notifications.unshift({ message, type, time: new Date().toISOString() });
   notifications = notifications.slice(0, NOTIFICATION_LIMIT);
   await writeJsonFile(NOTIFICATIONS_FILE, notifications);
+};
+
+const recordEventWithWindow = async (file, event, windowMs = EVENT_WINDOW_MS, maxEntries = MAX_EVENT_LOG) => {
+  if (!event || typeof event !== "object") {
+    return [];
+  }
+  let events = ensureArray(await safelyReadJson(file, []));
+  events.push(pruneUndefined({ ts: new Date().toISOString(), ...event }));
+  const cutoff = Date.now() - windowMs;
+  events = events
+    .filter((entry) => {
+      const ts = Date.parse(entry?.ts);
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice(-maxEntries);
+  await writeJsonFile(file, events);
+  return events;
 };
 
 const recordWaterIntakeEvent = async (event = {}) => {
@@ -318,6 +354,113 @@ const monitorWaterLevel = async (snapshot) => {
   }
 
   lastWaterLevelState = state;
+};
+
+const handleMotionSnapshot = async (snapshot = {}) => {
+  const lightOn = snapshot?.motionLightOn === true;
+  const distance = sanitizeNumber(snapshot?.motionDistanceCm);
+  if (lightOn || (typeof distance === "number" && distance <= MOTION_DISTANCE_THRESHOLD_CM)) {
+    await recordEventWithWindow(MOTION_EVENTS_FILE, { lightOn, distance }, EVENT_WINDOW_MS, 200);
+  }
+  if (lightOn && !lastMotionLightState) {
+    await appendNotification("Motion detected near the habitat entrance.", "info");
+  }
+  lastMotionLightState = lightOn;
+};
+
+const handleBarkSnapshot = async (snapshot = {}) => {
+  const barkAlert = snapshot?.barkAlertActive === true;
+  const barkCount = sanitizeNumber(snapshot?.barkCount);
+  if (Number.isFinite(barkCount) && barkCount > 0) {
+    await recordEventWithWindow(BARK_EVENTS_FILE, { barkCount, alert: barkAlert });
+  }
+  if (barkAlert && !lastBarkAlertState) {
+    await appendNotification("Repeated barking detected. Please check on your pet.", "warning");
+  }
+  lastBarkAlertState = barkAlert;
+};
+
+const deriveFeederState = (snapshot = {}) => {
+  if (typeof snapshot?.feedingStatus === "string") {
+    return snapshot.feedingStatus.toLowerCase();
+  }
+  if (snapshot?.feedingInProgress === true) {
+    return "feeding";
+  }
+  if (snapshot?.feedingInProgress === false && snapshot?.feederCurrentWeight > 0) {
+    return "idle";
+  }
+  return undefined;
+};
+
+const handleFeederSnapshot = async (snapshot = {}) => {
+  const feederState = deriveFeederState(snapshot);
+  const currentWeight = sanitizeNumber(snapshot?.feederCurrentWeight);
+  const targetWeight = sanitizeNumber(snapshot?.feederTargetWeight);
+  if (feederState || typeof currentWeight === "number" || typeof targetWeight === "number") {
+    await recordEventWithWindow(
+      FEEDER_EVENTS_FILE,
+      { state: feederState, currentWeight, targetWeight },
+      EVENT_WINDOW_MS,
+      MAX_FEEDING_EVENTS
+    );
+    await mergeJsonFile(
+      "dashboard",
+      pruneUndefined({
+        feederStatus: feederState,
+        feederCurrentWeight: currentWeight,
+        feederTargetWeight: targetWeight,
+      })
+    );
+  }
+  if (feederState === "feeding" && lastFeedingState !== "feeding") {
+    await appendNotification("Hardware feeder started dispensing food.", "info");
+  }
+  if (feederState === "idle" && lastFeedingState === "feeding") {
+    await appendNotification("Hardware feeder finished dispensing food.", "success");
+  }
+  lastFeedingState = feederState ?? lastFeedingState;
+};
+
+const handleActivitySnapshot = async (snapshot = {}) => {
+  const sleeping = snapshot?.petSleeping === true;
+  const activityWeight = sanitizeNumber(snapshot?.activityWeight ?? snapshot?.petWeight);
+  if (typeof activityWeight === "number") {
+    await recordEventWithWindow(ACTIVITY_HISTORY_FILE, { sleeping, weight: activityWeight });
+  }
+  if (typeof sleeping === "boolean") {
+    await mergeJsonFile("dashboard", { petSleeping: sleeping });
+    if (typeof lastPetSleepingState === "boolean" && sleeping !== lastPetSleepingState) {
+      await appendNotification(
+        sleeping ? "Pet is sleeping based on the activity scale." : "Pet is active again.",
+        "info"
+      );
+    }
+    lastPetSleepingState = sleeping;
+  }
+};
+
+const handleAirQualitySnapshot = async (snapshot = {}) => {
+  const aqi = typeof snapshot?.aqi === "string" ? snapshot.aqi : undefined;
+  const fanOn = snapshot?.fanOn === true;
+  const motionLight = normalizeBoolean(snapshot?.motionLightOn);
+  const barkAlert = normalizeBoolean(snapshot?.barkAlertActive);
+  await mergeJsonFile(
+    "dashboard",
+    pruneUndefined({
+      aqi,
+      fanOn,
+      motionLightOn: motionLight,
+      motionDistanceCm: sanitizeNumber(snapshot?.motionDistanceCm),
+      barkAlertActive: barkAlert,
+    })
+  );
+
+  const airQualityAlert = snapshot?.airQualityAlert === true || (typeof aqi === "string" && aqi.toLowerCase() === "poor");
+  if (airQualityAlert && !lastAirQualityAlertState) {
+    await appendNotification("Air quality dropped to poor levels. Ventilation engaged.", "warning");
+  }
+  lastAirQualityAlertState = airQualityAlert;
 };
 
 const recordWeightHistory = async (weightKg) => {
@@ -481,6 +624,11 @@ const maybeRecordEnvironmentSnapshot = async (fileName, snapshot) => {
   await writeJsonFile(ENV_CHART_FILE, toChartPoints(history));
   await monitorWaterLevel(snapshot);
   await maybeRecordWeightSnapshot(snapshot);
+  await handleMotionSnapshot(snapshot);
+  await handleBarkSnapshot(snapshot);
+  await handleFeederSnapshot(snapshot);
+  await handleActivitySnapshot(snapshot);
+  await handleAirQualitySnapshot(snapshot);
 };
 
 const readJsonFile = async (name) => {

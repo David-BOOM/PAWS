@@ -3,10 +3,31 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const fsPromises = require("fs/promises");
+const axios = require("axios");
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 app.use(cors());
+
+const configFolder = path.resolve(__dirname, "..", "config");
+const secretsPath = path.join(configFolder, "secrets.json");
+const secretsExamplePath = path.join(configFolder, "secrets.example.json");
+
+const loadSecrets = () => {
+  const fileToRead = fs.existsSync(secretsPath) ? secretsPath : secretsExamplePath;
+  try {
+    const raw = fs.readFileSync(fileToRead, "utf8");
+    return raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    console.warn(`Unable to read secrets file at ${fileToRead}. Using empty secrets.`, error);
+    return {};
+  }
+};
+
+const getLlmSecrets = () => {
+  const secrets = loadSecrets();
+  return secrets?.llm ?? {};
+};
 
 const dbFolder = path.join(__dirname, "database");
 if (!fs.existsSync(dbFolder)) {
@@ -285,6 +306,49 @@ app.post("/actions", asyncHandler(async (req, res) => {
   await writeJsonFile("actions", history);
 
   res.json({ message: "Action processed", data: nextDashboard });
+}));
+
+app.post("/llm/chat", asyncHandler(async (req, res) => {
+  const { messages, model, temperature } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new HttpError(400, "messages array is required");
+  }
+
+  const llmSecrets = getLlmSecrets();
+  const host = process.env.LLM_HOST || llmSecrets.host;
+  const llmModel = model || llmSecrets.model;
+  const llmTemperature =
+    typeof temperature === "number" && Number.isFinite(temperature)
+      ? temperature
+      : llmSecrets.temperature;
+
+  if (!host || !llmModel || typeof llmTemperature !== "number") {
+    throw new HttpError(500, "LLM configuration is incomplete");
+  }
+
+  const targetBase = host.endsWith("/") ? host.slice(0, -1) : host;
+  const payload = {
+    model: llmModel,
+    temperature: llmTemperature,
+    max_tokens: -1,
+    stream: false,
+    messages,
+  };
+
+  try {
+    const response = await axios.post(`${targetBase}/v1/chat/completions`, payload, {
+      timeout: 30000,
+    });
+    res.json(response.data);
+  } catch (error) {
+    if (error?.response) {
+      throw new HttpError(error.response.status || 502, "LLM request failed", {
+        status: error.response.status,
+        data: error.response.data,
+      });
+    }
+    throw new HttpError(502, error?.message || "Unable to reach LLM host");
+  }
 }));
 
 app.use((req, res) => {

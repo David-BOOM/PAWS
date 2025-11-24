@@ -6,37 +6,50 @@ export type LlmMessage = {
   content: string;
 };
 
-const llmSecrets = getLlmSecrets();
-const resolvedHost = process.env.EXPO_PUBLIC_LLM_HOST || llmSecrets.host;
+type LlmRuntimeConfig = {
+  baseUrl: string;
+  modelId: string;
+  temperature: number;
+};
 
-if (!resolvedHost) {
-  throw new Error(
-    "Missing LLM host. Set EXPO_PUBLIC_LLM_HOST or define llm.host inside config/secrets.json."
-  );
-}
+const normalizeBaseUrl = (url: string): string => url.replace(/\/+$/, "");
 
-const LLM_BASE_URL = resolvedHost;
+const resolveLlmConfig = (): LlmRuntimeConfig => {
+  const llmSecrets = getLlmSecrets();
+  const resolvedHost = llmSecrets.host;
+  if (!resolvedHost) {
+    throw new Error("Missing LLM host. Define llm.host inside config/secrets.json.");
+  }
 
-const resolvedModel = process.env.EXPO_PUBLIC_LLM_MODEL || llmSecrets.model;
-if (!resolvedModel) {
-  throw new Error(
-    "Missing LLM model. Set EXPO_PUBLIC_LLM_MODEL or define llm.model inside config/secrets.json."
-  );
-}
+  const resolvedModel = llmSecrets.model;
+  if (!resolvedModel) {
+    throw new Error("Missing LLM model. Define llm.model inside config/secrets.json.");
+  }
 
-const resolvedTemperature =
-  process.env.EXPO_PUBLIC_LLM_TEMPERATURE !== undefined
-    ? Number(process.env.EXPO_PUBLIC_LLM_TEMPERATURE)
-    : llmSecrets.temperature;
+  const resolvedTemperature = llmSecrets.temperature;
+  if (typeof resolvedTemperature !== "number" || Number.isNaN(resolvedTemperature)) {
+    throw new Error("Missing LLM temperature. Define llm.temperature inside config/secrets.json.");
+  }
 
-if (typeof resolvedTemperature !== "number" || Number.isNaN(resolvedTemperature)) {
-  throw new Error(
-    "Missing LLM temperature. Set EXPO_PUBLIC_LLM_TEMPERATURE or define llm.temperature inside config/secrets.json."
-  );
-}
+  return {
+    baseUrl: normalizeBaseUrl(resolvedHost),
+    modelId: resolvedModel,
+    temperature: resolvedTemperature,
+  };
+};
 
-const MODEL_ID = resolvedModel;
-const TEMPERATURE = resolvedTemperature;
+export const getLlmConnectionInfo = () => {
+  try {
+    const { baseUrl, modelId } = resolveLlmConfig();
+    return { baseUrl, modelId };
+  } catch (error: unknown) {
+    return {
+      baseUrl: undefined,
+      modelId: undefined,
+      error: error instanceof Error ? error.message : "Unknown configuration error",
+    };
+  }
+};
 
 const THINK_BLOCK_REGEX = /<think>[\s\S]*?<\/think>/gi;
 
@@ -50,13 +63,17 @@ const stripThinkingSegments = (raw: string): string => {
 };
 
 export async function sendPetAssistantChat(messages: LlmMessage[]): Promise<string> {
-  const response = await axios.post(`${LLM_BASE_URL}/v1/chat/completions`, {
-    model: MODEL_ID,
-    temperature: TEMPERATURE,
+  const { baseUrl, modelId, temperature } = resolveLlmConfig();
+
+  const payload = {
+    model: modelId,
+    temperature,
     max_tokens: -1,
     stream: false,
     messages,
-  });
+  };
+
+  const response = await axios.post(`${baseUrl}/v1/chat/completions`, payload);
 
   const reply = stripThinkingSegments(response?.data?.choices?.[0]?.message?.content ?? "");
   if (!reply) {

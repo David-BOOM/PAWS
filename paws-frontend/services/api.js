@@ -25,10 +25,11 @@ const deriveExpoBaseUrl = () => {
   return `http://${hostPart}:4100`;
 };
 
-const HOST = process.env.EXPO_PUBLIC_API_HOST || deriveExpoBaseUrl() || "http://127.0.0.1:4100";
+export const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_HOST || deriveExpoBaseUrl() || "http://127.0.0.1:4100";
 
 const API = axios.create({
-  baseURL: HOST,
+  baseURL: API_BASE_URL,
   timeout: 5000,
 });
 

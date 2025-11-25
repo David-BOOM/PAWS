@@ -25,7 +25,10 @@ logs/
 *.cert
 *.pfx
 config/secrets.json
-paws-arduino/arduino-wifi/include/generated-secrets.h
+paws-arduino/arduino-hardware/include/generated-secrets.h
+
+# Hardware simulation script (not tracked)
+paws-arduino/arduino-hardware/scripts/simulate-hardware.py
 
 # OS files
 .DS_Store

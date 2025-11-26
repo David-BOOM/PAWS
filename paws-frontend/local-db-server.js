@@ -51,6 +51,10 @@ const NOTIFICATIONS_FILE = "notifications";
 const NOTIFICATION_LIMIT = 50;
 const NOTIFICATION_SUPPRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+// Feeding schedule tracking
+const FEEDING_TOLERANCE_MINUTES = 2; // Allow 2 minute window for scheduled feeding
+let lastFeedCommandSentAt = null; // Track when we last sent a feed command
+
 let lastWaterLevelReading;
 let lastWaterLevelState;
 let lastMotionLightState;
@@ -147,6 +151,61 @@ const safelyReadJson = async (name, fallback) => {
 
 const normaliseFileKey = (raw = "") => raw.replace(/\.json$/i, "");
 const isEnvironmentCurrentFile = (raw) => normaliseFileKey(raw) === ENV_CURRENT_KEY;
+
+// Check if current time matches a scheduled meal time (within tolerance)
+const checkScheduledFeedingTime = async () => {
+  try {
+    const feeding = await safelyReadJson("feeding", {});
+    const { meal1Time, meal2Time } = feeding;
+    
+    if (!meal1Time && !meal2Time) {
+      return false; // No schedule set
+    }
+    
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    
+    const parseTimeToMinutes = (timeStr) => {
+      if (!timeStr || typeof timeStr !== "string") return null;
+      const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) return null;
+      const hours = parseInt(match[1], 10);
+      const minutes = parseInt(match[2], 10);
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+      return hours * 60 + minutes;
+    };
+    
+    const meal1Minutes = parseTimeToMinutes(meal1Time);
+    const meal2Minutes = parseTimeToMinutes(meal2Time);
+    
+    const isWithinTolerance = (scheduledMinutes) => {
+      if (scheduledMinutes === null) return false;
+      const diff = Math.abs(currentMinutes - scheduledMinutes);
+      // Handle midnight crossing
+      const adjustedDiff = Math.min(diff, 1440 - diff);
+      return adjustedDiff <= FEEDING_TOLERANCE_MINUTES;
+    };
+    
+    // Check if we already sent a command recently (within 5 minutes)
+    if (lastFeedCommandSentAt) {
+      const timeSinceLastCommand = Date.now() - lastFeedCommandSentAt;
+      if (timeSinceLastCommand < 5 * 60 * 1000) {
+        return false; // Don't send duplicate commands within 5 minutes
+      }
+    }
+    
+    if (isWithinTolerance(meal1Minutes) || isWithinTolerance(meal2Minutes)) {
+      console.log(`[Feeding] Scheduled feeding time reached! Current: ${now.toLocaleTimeString()}`);
+      lastFeedCommandSentAt = Date.now();
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("[Feeding] Error checking schedule:", error.message);
+    return false;
+  }
+};
 
 const sanitizeNumber = (value) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -753,12 +812,34 @@ app.patch("/api/files/:file", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Request body must be a JSON object");
   }
   // Add lastUpdated timestamp for environment-current (Arduino uploads)
-  const bodyWithTimestamp = req.params.file === ENV_CURRENT_KEY
+  const isEnvCurrent = req.params.file === ENV_CURRENT_KEY;
+  const bodyWithTimestamp = isEnvCurrent
     ? { ...req.body, lastUpdated: new Date().toISOString() }
     : req.body;
   const payload = await mergeJsonFile(req.params.file, bodyWithTimestamp);
   await maybeRecordEnvironmentSnapshot(req.params.file, payload);
-  res.json({ message: "Updated", data: payload });
+  
+  // For environment-current uploads (from Arduino), check if it's feeding time
+  let feedCommand = false;
+  if (isEnvCurrent) {
+    // Only trigger feed if not already feeding
+    const feedingInProgress = req.body?.feedingInProgress === true || req.body?.feedingStatus === "feeding";
+    if (!feedingInProgress) {
+      feedCommand = await checkScheduledFeedingTime();
+      if (feedCommand) {
+        // Record the feeding event and send notification
+        const feeding = await safelyReadJson("feeding", {});
+        const mealAmount = feeding?.mealAmount || 100;
+        await appendNotification(
+          `Scheduled feeding started: ${mealAmount}g at ${new Date().toLocaleTimeString()}`,
+          "info",
+          "feeding_time"
+        );
+      }
+    }
+  }
+  
+  res.json({ message: "Updated", data: payload, feedCommand });
 }));
 
 app.delete("/api/files/:file", asyncHandler(async (req, res) => {

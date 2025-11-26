@@ -306,10 +306,21 @@ String buildSensorJsonPayload() {
 
 void logServerResponse() {
   unsigned long start = millis();
+  String response = "";
   while (client.connected() && millis() - start < 2000UL) {
     while (client.available()) {
-      Serial.write(client.read());
+      char c = client.read();
+      response += c;
+      Serial.write(c);
       start = millis();
+    }
+  }
+  
+  // Check if server sent a feed command in the response
+  if (response.indexOf("\"feedCommand\":true") >= 0 || response.indexOf("\"feedCommand\": true") >= 0) {
+    if (!feedingInProgress && !feedingRequested) {
+      Serial.println("\n🍽️ SERVER: Feed command received!");
+      feedingRequested = true;
     }
   }
 }
@@ -395,8 +406,8 @@ void setup() {
   Serial.println("=== ALL SYSTEMS READY ===");
   Serial.println("COMMANDS:");
   Serial.println("Water: 'R' = Reset water alert");
-  Serial.println("Feeder: 'F'/'feed' = Start feeding");
   Serial.println("Feeder: 'T' = Tare feeder scale, 'W' = Set weight");
+  Serial.println("Feeder: Controlled by server schedule (meal times in app)");
   Serial.println("Activity: 'AT' = Tare activity scale");
   Serial.println("General: 'STATUS' = Full system status");
   Serial.println("================================");
@@ -843,13 +854,6 @@ void checkAllSerialCommands() {
   if (inputUpper == "R") {
     waterMessageShown = false;
     Serial.println("WATER: Alert reset");
-  } else if (inputLower == "f" || inputLower == "feed") {
-    if (!feedingInProgress) {
-      Serial.println("FEEDER: Manual feeding requested!");
-      feedingRequested = true;
-    } else {
-      Serial.println("FEEDER: Already feeding!");
-    }
   } else if (inputUpper == "T") {
     Serial.println("FEEDER: Taring scale...");
     feederScale.tare();
@@ -869,8 +873,9 @@ void checkAllSerialCommands() {
     printSystemStatus();
   } else {
     Serial.println("Unknown command! Available commands:");
-    Serial.println("R=Water reset, F/feed=Feed, T=Tare feeder, W=Set weight");
+    Serial.println("R=Water reset, T=Tare feeder, W=Set weight");
     Serial.println("AT=Tare activity, STATUS=Full status");
+    Serial.println("Note: Feeding is controlled by server schedule");
   }
 }
 

@@ -1064,8 +1064,14 @@ app.post("/llm/chat", asyncHandler(async (req, res) => {
   };
 
   try {
+    console.log(`[LLM] Forwarding request to: ${targetBase}/v1/chat/completions`);
+    console.log(`[LLM] Model: ${llmModel}, Temperature: ${llmTemperature}, Messages: ${messages.length}`);
+    
     const response = await axios.post(`${targetBase}/v1/chat/completions`, payload, {
-      timeout: 30000,
+      timeout: 120000,
+      headers: {
+        "Content-Type": "application/json",
+      },
     });
     res.json(response.data);
   } catch (error) {

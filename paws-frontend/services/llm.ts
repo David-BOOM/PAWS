@@ -72,6 +72,10 @@ const stripThinkingSegments = (raw: string): string => {
 export async function sendPetAssistantChat(messages: LlmMessage[]): Promise<string> {
   const { baseUrl, modelId, temperature } = resolveLlmConfig();
 
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    throw new Error("Messages array is required and cannot be empty");
+  }
+
   const payload = {
     model: modelId,
     temperature,
@@ -80,7 +84,14 @@ export async function sendPetAssistantChat(messages: LlmMessage[]): Promise<stri
     messages,
   };
 
-  const response = await axios.post(`${baseUrl}/v1/chat/completions`, payload);
+  console.log("[LLM] Sending request to:", `${baseUrl}/v1/chat/completions`);
+  console.log("[LLM] Payload:", JSON.stringify(payload, null, 2));
+
+  const response = await axios.post(`${baseUrl}/v1/chat/completions`, payload, {
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
 
   const reply = stripThinkingSegments(response?.data?.choices?.[0]?.message?.content ?? "");
   if (!reply) {

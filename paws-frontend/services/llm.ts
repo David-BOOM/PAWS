@@ -12,7 +12,14 @@ type LlmRuntimeConfig = {
   temperature: number;
 };
 
-const normalizeBaseUrl = (url: string): string => url.replace(/\/+$/, "");
+const normalizeBaseUrl = (url: string): string => {
+  let normalized = url.replace(/\/+$/, "");
+  // Add http:// if no protocol specified
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = `http://${normalized}`;
+  }
+  return normalized;
+};
 
 const resolveLlmConfig = (): LlmRuntimeConfig => {
   const llmSecrets = getLlmSecrets();

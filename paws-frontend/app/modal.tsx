@@ -3,6 +3,7 @@ import React from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -298,8 +299,27 @@ export default function Summery() {
   const [contextLoading, setContextLoading] = React.useState(true);
   const [contextUpdatedAt, setContextUpdatedAt] = React.useState<string | null>(null);
   const [contextError, setContextError] = React.useState<string | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = React.useState(false);
   const listRef = React.useRef<FlatList<ChatMessage>>(null);
   const placeholderColor = effectiveScheme === "dark" ? "#94a3b8" : "#6b7280";
+
+  // Track keyboard visibility
+  React.useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    
+    const showSubscription = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const refreshContext = React.useCallback(async () => {
     setContextLoading(true);
@@ -464,23 +484,21 @@ export default function Summery() {
   };
 
   const sendDisabled = sending || !input.trim();
-  const keyboardVerticalOffset = Platform.select({
-    ios: insets.top + 60,
-    android: 32,
-    default: 0,
-  });
+  
+  // Bottom padding: when keyboard hidden, leave space for tab bar; when visible, minimal padding
+  const bottomPadding = keyboardVisible ? 8 : 4;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={keyboardVerticalOffset}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <View
           style={[
             styles.container,
-            { backgroundColor: colors.background },
+            { backgroundColor: colors.background, paddingBottom: bottomPadding },
           ]}
         >
           <Text style={[styles.title, { color: colors.text }]}>Summery Assistant</Text>
@@ -549,7 +567,7 @@ export default function Summery() {
           />
 
           <View
-            style={[styles.inputRow, { borderColor: colors.border, backgroundColor: colors.card, marginBottom: 4 }]}
+            style={[styles.inputRow, { borderColor: colors.border, backgroundColor: colors.card }]}
           >
           <TextInput
             style={[styles.input, { color: colors.text }]}

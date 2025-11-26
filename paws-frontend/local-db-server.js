@@ -752,7 +752,11 @@ app.patch("/api/files/:file", asyncHandler(async (req, res) => {
   if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
     throw new HttpError(400, "Request body must be a JSON object");
   }
-  const payload = await mergeJsonFile(req.params.file, req.body);
+  // Add lastUpdated timestamp for environment-current (Arduino uploads)
+  const bodyWithTimestamp = req.params.file === ENV_CURRENT_KEY
+    ? { ...req.body, lastUpdated: new Date().toISOString() }
+    : req.body;
+  const payload = await mergeJsonFile(req.params.file, bodyWithTimestamp);
   await maybeRecordEnvironmentSnapshot(req.params.file, payload);
   res.json({ message: "Updated", data: payload });
 }));
@@ -781,6 +785,24 @@ app.get("/dashboard", asyncHandler(async (req, res) => {
     safelyReadJson(ENV_CURRENT_KEY, {}),
   ]);
 
+  // Determine device status based on lastUpdated timestamp
+  const lastUpdated = envCurrent?.lastUpdated;
+  let deviceStatus = "Offline";
+  if (lastUpdated) {
+    const lastUpdateTime = new Date(lastUpdated).getTime();
+    const now = Date.now();
+    const secondsSinceUpdate = Math.floor((now - lastUpdateTime) / 1000);
+    // Arduino uploads every 5 seconds; consider online if updated within 15 seconds
+    if (secondsSinceUpdate <= 15) {
+      deviceStatus = "Online";
+    } else if (secondsSinceUpdate <= 60) {
+      deviceStatus = `Last seen ${secondsSinceUpdate}s ago`;
+    } else {
+      const minutes = Math.floor(secondsSinceUpdate / 60);
+      deviceStatus = `Offline (${minutes}m ago)`;
+    }
+  }
+
   // Merge environment data into dashboard response
   const merged = {
     ...dashboard,
@@ -790,6 +812,8 @@ app.get("/dashboard", asyncHandler(async (req, res) => {
     aqi: dashboard?.aqi ?? envCurrent?.aqi,
     waterLevel: dashboard?.waterLevel ?? envCurrent?.waterLevel,
     waterLevelState: dashboard?.waterLevelState ?? envCurrent?.waterLevelState,
+    deviceStatus,
+    lastUpdated,
   };
 
   res.json(merged ?? {});

@@ -7,6 +7,24 @@ import { useTheme } from "../components/theme";
 import { getDashboardData, triggerQuickAction } from "../services/api";
 import { AUTO_REFRESH_INTERVAL_MS, REQUEST_TIMEOUT_MS } from "../services/config";
 
+// Helper to format water level display
+const formatWaterLevel = (waterLevel?: number, waterLevelState?: string) => {
+  if (waterLevel != null) {
+    const state = waterLevelState ? ` (${waterLevelState})` : "";
+    return `${waterLevel}%${state}`;
+  }
+  if (waterLevelState) {
+    return waterLevelState === "low" ? "0% (low)" : "100% (high)";
+  }
+  return "N/A";
+};
+
+// Check if water level is low
+const isWaterLow = (waterLevel?: number, waterLevelState?: string) => {
+  if (waterLevel != null) return waterLevel <= 20;
+  return waterLevelState === "low";
+};
+
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -108,20 +126,20 @@ export default function Dashboard() {
           />
           <SensorCard label="Air Quality" value={data.aqi ?? "N/A"} />
           <SensorCard label="Temperature" value={data.temperature != null ? `${data.temperature} °C` : "N/A"} />
-          <SensorCard label="Water Level" value={data.waterLevel != null ? `${data.waterLevel}%` : (data.waterLevelState ?? "N/A")} />
+          <SensorCard 
+            label="Water Level" 
+            value={formatWaterLevel(data.waterLevel, data.waterLevelState)}
+            valueStyle={isWaterLow(data.waterLevel, data.waterLevelState) ? { color: "#dc2626" } : undefined}
+          />
           <SensorCard
             label="Device Status"
-            value={
-              typeof data.deviceStatus === "object" && data.deviceStatus !== null
-                ? [
-                    data.deviceStatus.status ?? undefined,
-                    (data.deviceStatus.lightOn === true || data.deviceStatus.lightOn === false)
-                      ? `Light: ${data.deviceStatus.lightOn ? "On" : "Off"}`
-                      : undefined,
-                  ]
-                    .filter(Boolean)
-                    .join(" • ") || "N/A"
-                : String(data.deviceStatus ?? "N/A")
+            value={data.deviceStatus ?? "N/A"}
+            valueStyle={
+              data.deviceStatus === "Online" 
+                ? { color: "#16a34a" } 
+                : data.deviceStatus?.startsWith("Offline") 
+                  ? { color: "#dc2626" } 
+                  : undefined
             }
           />
         </>

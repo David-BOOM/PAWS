@@ -1,10 +1,10 @@
 import { StyleSheet, Text, View } from "react-native";
 
-export default function SensorCard({ label, value }) {
+export default function SensorCard({ label, value, valueStyle }) {
   return (
     <View style={styles.card}>
       <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>{value}</Text>
+      <Text style={[styles.value, valueStyle]}>{value}</Text>
     </View>
   );
 }

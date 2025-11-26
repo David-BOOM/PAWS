@@ -299,20 +299,20 @@ export default function Summery() {
   const [contextLoading, setContextLoading] = React.useState(true);
   const [contextUpdatedAt, setContextUpdatedAt] = React.useState<string | null>(null);
   const [contextError, setContextError] = React.useState<string | null>(null);
-  const [keyboardVisible, setKeyboardVisible] = React.useState(false);
+  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
   const listRef = React.useRef<FlatList<ChatMessage>>(null);
   const placeholderColor = effectiveScheme === "dark" ? "#94a3b8" : "#6b7280";
 
-  // Track keyboard visibility
+  // Track keyboard visibility and height
   React.useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     
-    const showSubscription = Keyboard.addListener(showEvent, () => {
-      setKeyboardVisible(true);
+    const showSubscription = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
     });
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
-      setKeyboardVisible(false);
+      setKeyboardHeight(0);
     });
 
     return () => {
@@ -485,14 +485,22 @@ export default function Summery() {
 
   const sendDisabled = sending || !input.trim();
   
-  // Bottom padding: when keyboard hidden, leave space for tab bar; when visible, minimal padding
-  const bottomPadding = keyboardVisible ? 8 : 4;
+  // Calculate bottom padding based on keyboard state and platform
+  const keyboardVisible = keyboardHeight > 0;
+  const bottomPadding = Platform.select({
+    // iOS: KeyboardAvoidingView handles it, just need small padding
+    ios: keyboardVisible ? 8 : 4,
+    // Android: Need to account for keyboard height minus tab bar
+    android: keyboardVisible ? Math.max(keyboardHeight - 80, 8) : 4,
+    // Web: no special handling needed
+    default: 4,
+  });
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <View

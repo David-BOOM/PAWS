@@ -1,44 +1,22 @@
 import type { ExpoConfig } from "expo/config";
-import fs from "node:fs";
-import path from "node:path";
 import baseConfig from "./app.json";
-import type { SecretsShape } from "./types/secrets";
 
-function loadSecrets(): SecretsShape {
-  // Try paths relative to project root (paws-frontend)
-  const possiblePaths = [
-    // Local config folder (for EAS build)
-    path.resolve(__dirname, "config", "secrets.json"),
-    path.resolve(__dirname, "config", "secrets.example.json"),
-    // Parent config folder (for local development)
-    path.resolve(__dirname, "..", "config", "secrets.json"),
-    path.resolve(__dirname, "..", "config", "secrets.example.json"),
-  ];
-
-  for (const secretsPath of possiblePaths) {
-    if (fs.existsSync(secretsPath)) {
-      try {
-        const raw = fs.readFileSync(secretsPath, "utf-8");
-        return JSON.parse(raw) as SecretsShape;
-      } catch (error) {
-        console.warn(`Unable to parse secrets file at ${secretsPath}:`, error);
-      }
-    }
-  }
-  
-  console.warn("No secrets file found. Using empty secrets.");
-  return {};
-}
+// In EAS builds, secrets should be provided via EAS Environment Variables
+// For local development, we use the app.json config directly
+// Secrets can be added at runtime via Expo Constants or EAS Secrets
 
 export default (): ExpoConfig => {
-  const secrets = loadSecrets();
   const expoConfig = baseConfig?.expo ?? {};
 
   return {
     ...expoConfig,
     extra: {
       ...(expoConfig.extra ?? {}),
-      secrets,
+      // Server config can be overridden via EAS Environment Variables
+      server: {
+        host: process.env.SERVER_HOST || "192.168.0.131",
+        port: process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 4100,
+      },
     },
   } as ExpoConfig;
 };

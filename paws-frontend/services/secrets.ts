@@ -3,6 +3,7 @@ import type { SecretsShape } from "../types/secrets";
 
 type ExtrasShape = {
   secrets?: SecretsShape;
+  server?: { host?: string; port?: number };
 };
 
 const extras: ExtrasShape =
@@ -13,7 +14,13 @@ const extras: ExtrasShape =
 
 const cachedSecrets: SecretsShape = extras?.secrets ?? {};
 
+// Server config from extra or defaults
+const serverConfig = extras?.server ?? { host: "192.168.0.131", port: 4100 };
+
 export const getSecrets = (): SecretsShape => cachedSecrets;
 export const getLlmSecrets = () => cachedSecrets.llm ?? {};
-export const getServerSecrets = () => cachedSecrets.server ?? {};
+export const getServerSecrets = () => ({
+  host: serverConfig.host ?? cachedSecrets.server?.host ?? "192.168.0.131",
+  port: serverConfig.port ?? cachedSecrets.server?.port ?? 4100,
+});
 export const getWifiSecrets = () => cachedSecrets.wifi ?? {};

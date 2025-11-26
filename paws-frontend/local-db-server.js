@@ -1020,10 +1020,15 @@ app.post("/actions", asyncHandler(async (req, res) => {
     await recordFeedingEvent(feedingAmountToRecord);
   }
 
-  const history = await readJsonFile("actions").catch((error) => {
+  let history = await readJsonFile("actions").catch((error) => {
     if (error.status === 404) return [];
     throw error;
   });
+
+  // Ensure history is an array (fix for corrupted data)
+  if (!Array.isArray(history)) {
+    history = [];
+  }
 
   history.push({ ts: new Date().toISOString(), action });
   await writeJsonFile("actions", history);

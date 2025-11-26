@@ -9,12 +9,13 @@ import { AUTO_REFRESH_INTERVAL_MS, REQUEST_TIMEOUT_MS } from "../services/config
 
 // Helper to format water level display
 const formatWaterLevel = (waterLevel?: number, waterLevelState?: string) => {
+  // If we have a numeric water level, use threshold to determine state
   if (waterLevel != null) {
-    const state = waterLevelState ? ` (${waterLevelState})` : "";
-    return `${waterLevel}%${state}`;
+    return waterLevel <= 20 ? "Low" : "Sufficient";
   }
+  // Fall back to state string
   if (waterLevelState) {
-    return waterLevelState === "low" ? "0% (low)" : "100% (high)";
+    return waterLevelState === "low" ? "Low" : "Sufficient";
   }
   return "N/A";
 };

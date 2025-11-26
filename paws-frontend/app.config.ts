@@ -5,18 +5,29 @@ import baseConfig from "./app.json";
 import type { SecretsShape } from "./types/secrets";
 
 function loadSecrets(): SecretsShape {
-  const projectRoot = path.resolve(__dirname, "..");
-  const secretsPath = path.join(projectRoot, "config", "secrets.json");
-  const fallbackPath = path.join(projectRoot, "config", "secrets.example.json");
+  // Try paths relative to project root (paws-frontend)
+  const possiblePaths = [
+    // Local config folder (for EAS build)
+    path.resolve(__dirname, "config", "secrets.json"),
+    path.resolve(__dirname, "config", "secrets.example.json"),
+    // Parent config folder (for local development)
+    path.resolve(__dirname, "..", "config", "secrets.json"),
+    path.resolve(__dirname, "..", "config", "secrets.example.json"),
+  ];
 
-  const fileToRead = fs.existsSync(secretsPath) ? secretsPath : fallbackPath;
-  try {
-    const raw = fs.readFileSync(fileToRead, "utf-8");
-    return JSON.parse(raw) as SecretsShape;
-  } catch (error) {
-    console.warn(`Unable to read secrets file at ${fileToRead}. Using empty secrets.`, error);
-    return {};
+  for (const secretsPath of possiblePaths) {
+    if (fs.existsSync(secretsPath)) {
+      try {
+        const raw = fs.readFileSync(secretsPath, "utf-8");
+        return JSON.parse(raw) as SecretsShape;
+      } catch (error) {
+        console.warn(`Unable to parse secrets file at ${secretsPath}:`, error);
+      }
+    }
   }
+  
+  console.warn("No secrets file found. Using empty secrets.");
+  return {};
 }
 
 export default (): ExpoConfig => {

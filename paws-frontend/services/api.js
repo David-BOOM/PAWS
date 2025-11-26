@@ -1,5 +1,6 @@
 import axios from "axios";
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 
 // Local development server base URL.
 // For LAN access from real devices (Android/iOS/ESP8266), prefer setting an env var:
@@ -25,8 +26,18 @@ const deriveExpoBaseUrl = () => {
   return `http://${hostPart}:4100`;
 };
 
+// For web platform, use the same hostname as the current page
+const deriveWebBaseUrl = () => {
+  if (Platform.OS !== "web" || typeof window === "undefined") {
+    return null;
+  }
+  // Use the same host the web app is served from, with port 4100
+  const hostname = window.location.hostname;
+  return `http://${hostname}:4100`;
+};
+
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_HOST || deriveExpoBaseUrl() || "http://127.0.0.1:4100";
+  process.env.EXPO_PUBLIC_API_HOST || deriveWebBaseUrl() || deriveExpoBaseUrl() || "http://127.0.0.1:4100";
 
 const API = axios.create({
   baseURL: API_BASE_URL,

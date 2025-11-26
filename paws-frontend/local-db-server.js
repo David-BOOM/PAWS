@@ -43,6 +43,9 @@ const WEIGHT_HISTORY_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_WEIGHT_HISTORY_POINTS = 500;
 const WEIGHT_MIN_CHANGE = 0.05;
 
+const AUTO_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const AUTO_CLEANUP_MAX_AGE_MS = 31 * 24 * 60 * 60 * 1000; // 31 days
+
 const ANALYTICS_FILE = "analysis";
 const NOTIFICATIONS_FILE = "notifications";
 const NOTIFICATION_LIMIT = 50;
@@ -209,7 +212,17 @@ const writeAnalysisSection = async (section, payload) => {
   await mergeJsonFile(ANALYTICS_FILE, { [section]: payload });
 };
 
-const appendNotification = async (message, type = "alert") => {
+// Notification types that should trigger system-level push notifications
+const PUSH_NOTIFICATION_TYPES = [
+  "feeding_time",
+  "feeding_complete", 
+  "water_low",
+  "abnormal_barking",
+  "air_quality_alert",
+  "system_alert",
+];
+
+const appendNotification = async (message, type = "alert", pushType = null) => {
   if (!message) return;
   let notifications = ensureArray(await safelyReadJson(NOTIFICATIONS_FILE, []));
   const existing = notifications.find((entry) => entry?.message === message);
@@ -221,7 +234,15 @@ const appendNotification = async (message, type = "alert") => {
     notifications = notifications.filter((entry) => entry?.message !== message);
   }
 
-  notifications.unshift({ message, type, time: new Date().toISOString() });
+  // Add notification with push flag for important events
+  const shouldPush = pushType && PUSH_NOTIFICATION_TYPES.includes(pushType);
+  notifications.unshift({ 
+    message, 
+    type, 
+    time: new Date().toISOString(),
+    pushType: shouldPush ? pushType : undefined,
+    pushed: false, // App will set this to true after sending push notification
+  });
   notifications = notifications.slice(0, NOTIFICATION_LIMIT);
   await writeJsonFile(NOTIFICATIONS_FILE, notifications);
 };
@@ -346,7 +367,7 @@ const monitorWaterLevel = async (snapshot) => {
   if (!state) return;
 
   if (state === "low") {
-    await appendNotification(WATER_LOW_NOTIFICATION, "warning");
+    await appendNotification(WATER_LOW_NOTIFICATION, "warning", "water_low");
   }
 
   if (state === "low" && lastWaterLevelState !== "low") {
@@ -375,7 +396,7 @@ const handleBarkSnapshot = async (snapshot = {}) => {
     await recordEventWithWindow(BARK_EVENTS_FILE, { barkCount, alert: barkAlert });
   }
   if (barkAlert && !lastBarkAlertState) {
-    await appendNotification("Repeated barking detected. Please check on your pet.", "warning");
+    await appendNotification("Repeated barking detected. Please check on your pet.", "warning", "abnormal_barking");
   }
   lastBarkAlertState = barkAlert;
 };
@@ -417,7 +438,7 @@ const handleFeederSnapshot = async (snapshot = {}) => {
     await appendNotification("Hardware feeder started dispensing food.", "info");
   }
   if (feederState === "idle" && lastFeedingState === "feeding") {
-    await appendNotification("Hardware feeder finished dispensing food.", "success");
+    await appendNotification("Hardware feeder finished dispensing food.", "success", "feeding_complete");
   }
   lastFeedingState = feederState ?? lastFeedingState;
 };
@@ -458,7 +479,7 @@ const handleAirQualitySnapshot = async (snapshot = {}) => {
 
   const airQualityAlert = snapshot?.airQualityAlert === true || (typeof aqi === "string" && aqi.toLowerCase() === "poor");
   if (airQualityAlert && !lastAirQualityAlertState) {
-    await appendNotification("Air quality dropped to poor levels. Ventilation engaged.", "warning");
+    await appendNotification("Air quality dropped to poor levels. Ventilation engaged.", "warning", "air_quality_alert");
   }
   lastAirQualityAlertState = airQualityAlert;
 };
@@ -567,7 +588,7 @@ const runFoodAnalysis = async (historyInput) => {
   };
 
   if (foodWarning) {
-    await appendNotification("Food intake is below the expected schedule. Please check the feeder.", "warning");
+    await appendNotification("Food intake is below the expected schedule. Please check the feeder.", "warning", "system_alert");
   }
 
   await writeAnalysisSection("food", result);
@@ -752,11 +773,26 @@ app.delete("/api/files/:file", asyncHandler(async (req, res) => {
 }));
 
 app.get("/dashboard", asyncHandler(async (req, res) => {
-  const dashboard = await readJsonFile("dashboard").catch((error) => {
-    if (error.status === 404) return {};
-    throw error;
-  });
-  res.json(dashboard ?? {});
+  const [dashboard, envCurrent] = await Promise.all([
+    readJsonFile("dashboard").catch((error) => {
+      if (error.status === 404) return {};
+      throw error;
+    }),
+    safelyReadJson(ENV_CURRENT_KEY, {}),
+  ]);
+
+  // Merge environment data into dashboard response
+  const merged = {
+    ...dashboard,
+    // Include environment readings if not already in dashboard
+    temperature: dashboard?.temperature ?? envCurrent?.temperature,
+    humidity: dashboard?.humidity ?? envCurrent?.humidity,
+    aqi: dashboard?.aqi ?? envCurrent?.aqi,
+    waterLevel: dashboard?.waterLevel ?? envCurrent?.waterLevel,
+    waterLevelState: dashboard?.waterLevelState ?? envCurrent?.waterLevelState,
+  };
+
+  res.json(merged ?? {});
 }));
 
 app.get("/notifications", asyncHandler(async (req, res) => {
@@ -765,6 +801,31 @@ app.get("/notifications", asyncHandler(async (req, res) => {
     throw error;
   });
   res.json(Array.isArray(notifications) ? notifications : []);
+}));
+
+// Mark notifications as pushed (after app sends local push notification)
+app.post("/notifications/mark-pushed", asyncHandler(async (req, res) => {
+  const { times } = req.body || {};
+  if (!Array.isArray(times) || times.length === 0) {
+    throw new HttpError(400, "Array of notification times is required");
+  }
+  
+  let notifications = ensureArray(await safelyReadJson(NOTIFICATIONS_FILE, []));
+  let updated = 0;
+  
+  notifications = notifications.map((n) => {
+    if (times.includes(n.time) && !n.pushed) {
+      updated++;
+      return { ...n, pushed: true };
+    }
+    return n;
+  });
+  
+  if (updated > 0) {
+    await writeJsonFile(NOTIFICATIONS_FILE, notifications);
+  }
+  
+  res.json({ message: `Marked ${updated} notifications as pushed` });
 }));
 
 app.post("/settings", asyncHandler(async (req, res) => {
@@ -934,7 +995,123 @@ const bootstrapAnalytics = async () => {
   }
 };
 
+// Auto-cleanup: remove records older than 31 days from all database files
+// Files with array data (event logs, history)
+const AUTO_CLEANUP_ARRAY_FILES = [
+  WATER_EVENTS_FILE,        // water-events
+  FEEDING_HISTORY_FILE,     // feeding-history
+  MOTION_EVENTS_FILE,       // motion-events
+  BARK_EVENTS_FILE,         // bark-events
+  FEEDER_EVENTS_FILE,       // feeder-events
+  ACTIVITY_HISTORY_FILE,    // activity-history
+  WEIGHT_HISTORY_FILE,      // weight-history
+  ENV_HISTORY_FILE,         // environment-history
+  NOTIFICATIONS_FILE,       // notifications
+];
+
+// Files with object data that may contain timestamped entries
+const AUTO_CLEANUP_OBJECT_FILES = [
+  "actions",
+  ANALYTICS_FILE,           // analysis
+  "dashboard",
+  ENV_CURRENT_KEY,          // environment-current
+];
+// Note: settings.json and feeding.json are excluded (user preferences/config)
+// Note: environment.json (ENV_CHART_FILE) is handled separately as it has nested arrays
+
+const runAutoCleanup = async () => {
+  const cutoff = Date.now() - AUTO_CLEANUP_MAX_AGE_MS;
+  let totalRemoved = 0;
+
+  // Clean array-based files (event logs, history)
+  for (const file of AUTO_CLEANUP_ARRAY_FILES) {
+    try {
+      const data = await safelyReadJson(file, []);
+      if (!Array.isArray(data)) continue;
+
+      const before = data.length;
+      const filtered = data.filter((entry) => {
+        // Try 'ts' first (most event files), then 'time' (notifications)
+        const timestamp = entry?.ts || entry?.time;
+        if (!timestamp) return true; // Keep entries without timestamp
+        const ts = Date.parse(timestamp);
+        return Number.isFinite(ts) && ts >= cutoff;
+      });
+
+      if (filtered.length < before) {
+        await writeJsonFile(file, filtered);
+        totalRemoved += before - filtered.length;
+        console.log(`Auto-cleanup: removed ${before - filtered.length} old records from ${file}`);
+      }
+    } catch (error) {
+      console.error(`Auto-cleanup error for ${file}:`, error.message);
+    }
+  }
+
+  // Clean object-based files (check for timestamped properties)
+  for (const file of AUTO_CLEANUP_OBJECT_FILES) {
+    try {
+      const data = await safelyReadJson(file, {});
+      if (!data || typeof data !== "object" || Array.isArray(data)) continue;
+
+      // Check if the object has a timestamp that's too old
+      const timestamp = data?.ts || data?.time || data?.timestamp || data?.updatedAt;
+      if (timestamp) {
+        const ts = Date.parse(timestamp);
+        if (Number.isFinite(ts) && ts < cutoff) {
+          await writeJsonFile(file, {});
+          totalRemoved++;
+          console.log(`Auto-cleanup: cleared stale data from ${file}`);
+        }
+      }
+    } catch (error) {
+      console.error(`Auto-cleanup error for ${file}:`, error.message);
+    }
+  }
+
+  // Also cleanup environment chart data (object with metric arrays)
+  try {
+    const chartData = await safelyReadJson(ENV_CHART_FILE, {});
+    if (chartData && typeof chartData === "object") {
+      let chartModified = false;
+      for (const metric of Object.keys(chartData)) {
+        if (!Array.isArray(chartData[metric])) continue;
+        const before = chartData[metric].length;
+        chartData[metric] = chartData[metric].filter((entry) => {
+          const timestamp = entry?.ts || entry?.t;
+          if (!timestamp) return true;
+          const ts = Date.parse(timestamp);
+          return Number.isFinite(ts) && ts >= cutoff;
+        });
+        if (chartData[metric].length < before) {
+          chartModified = true;
+          totalRemoved += before - chartData[metric].length;
+        }
+      }
+      if (chartModified) {
+        await writeJsonFile(ENV_CHART_FILE, chartData);
+        console.log(`Auto-cleanup: cleaned old environment chart data`);
+      }
+    }
+  } catch (error) {
+    console.error("Auto-cleanup error for environment chart:", error.message);
+  }
+
+  if (totalRemoved > 0) {
+    console.log(`Auto-cleanup complete: removed ${totalRemoved} total records older than 31 days`);
+  }
+};
+
+// Run cleanup on startup and then every hour
+const startAutoCleanup = () => {
+  runAutoCleanup().catch((err) => console.error("Initial auto-cleanup failed:", err));
+  setInterval(() => {
+    runAutoCleanup().catch((err) => console.error("Auto-cleanup failed:", err));
+  }, AUTO_CLEANUP_INTERVAL_MS);
+};
+
 bootstrapAnalytics();
+startAutoCleanup();
 
 const args = process.argv.slice(2);
 const portFromArg = args.find((arg) => arg.startsWith("--port="));

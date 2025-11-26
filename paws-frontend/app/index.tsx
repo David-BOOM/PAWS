@@ -1,22 +1,22 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import QuickActionButton from "../components/QuickActionButton";
 import SensorCard from "../components/SensorCard";
 import { useTheme } from "../components/theme";
 import { getDashboardData, triggerQuickAction } from "../services/api";
-
-const REQ_TIMEOUT_MS = 3000;
+import { AUTO_REFRESH_INTERVAL_MS, REQUEST_TIMEOUT_MS } from "../services/config";
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lightOn, setLightOn] = useState<boolean>(false);
   const { colors, effectiveScheme } = useTheme();
-  const fetchData = useCallback(async () => {
-    const shouldShowSpinner = !data;
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchData = useCallback(async (showSpinner = false) => {
     try {
-      if (shouldShowSpinner) setLoading(true);
+      if (showSpinner) setLoading(true);
       const res = await withTimeout(getDashboardData());
       setData(res.data);
       const initialLight =
@@ -24,23 +24,34 @@ export default function Dashboard() {
         (res?.data?.deviceStatus?.lightOn as boolean | undefined) ??
         false;
       setLightOn(Boolean(initialLight));
-      // Removed cache persistence to keep reads strictly from the database
     } catch (err) {
-      if (shouldShowSpinner) setLoading(false);
       console.error("Error fetching dashboard data", err);
-      return;
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  }, [data]);
+  }, []);
 
+  // Initial fetch and auto-refresh synced with Arduino upload rate
   useFocusEffect(
     useCallback(() => {
-      fetchData();
+      fetchData(true); // Show spinner on initial load
+      
+      // Start auto-refresh interval
+      intervalRef.current = setInterval(() => {
+        fetchData(false); // Silent refresh
+      }, AUTO_REFRESH_INTERVAL_MS);
+
+      // Cleanup on blur
+      return () => {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
     }, [fetchData])
   );
 
-  const withTimeout = <T,>(p: Promise<T>, ms = REQ_TIMEOUT_MS) =>
+  const withTimeout = <T,>(p: Promise<T>, ms = REQUEST_TIMEOUT_MS) =>
     Promise.race<T>([
       p,
       new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
@@ -95,9 +106,9 @@ export default function Dashboard() {
               return lastMealTimeText ? `${lastMealAmount} • ${lastMealTimeText}` : lastMealAmount;
             })()}
           />
-          <SensorCard label="Air Quality" value={data.aqi} />
-          <SensorCard label="Temperature" value={`${data.temperature} °C`} />
-          <SensorCard label="Water Level" value={String(data.waterLevel ?? "N/A")} />
+          <SensorCard label="Air Quality" value={data.aqi ?? "N/A"} />
+          <SensorCard label="Temperature" value={data.temperature != null ? `${data.temperature} °C` : "N/A"} />
+          <SensorCard label="Water Level" value={data.waterLevel != null ? `${data.waterLevel}%` : (data.waterLevelState ?? "N/A")} />
           <SensorCard
             label="Device Status"
             value={

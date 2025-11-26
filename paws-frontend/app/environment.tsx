@@ -1,10 +1,11 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, InteractionManager, LayoutChangeEvent, ScrollView, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, G, Line, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import SensorCard from "../components/SensorCard";
 import { useTheme } from "../components/theme";
 import { getEnvironmentCurrent, getEnvironmentSeries } from "../services/api";
+import { AUTO_REFRESH_INTERVAL_MS } from "../services/config";
 
 type EnvData = {
   temperature?: number;
@@ -121,24 +122,21 @@ export default function Environment() {
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const { colors, effectiveScheme } = useTheme();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const task = InteractionManager.runAfterInteractions(() => setReady(true));
     return () => task.cancel();
   }, []);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchData();
-    }, [])
-  );
-
   const [series, setSeries] = useState<{ temperature: SeriesPoint[]; co2: SeriesPoint[]; voc: SeriesPoint[]; methanal: SeriesPoint[] } | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (showSpinner = false) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (showSpinner) {
+        setLoading(true);
+        setError(null);
+      }
       // Fetch current readings and series strictly from the database server
       const [curRes, serRes] = await Promise.all([
         getEnvironmentCurrent().catch((err) => {
@@ -172,12 +170,34 @@ export default function Environment() {
       });
     } catch (err: any) {
       console.error("Error fetching environment data:", err?.message || err);
-      setError("Failed to load environment data from database");
-      setCurrentData(null);
+      if (showSpinner) {
+        setError("Failed to load environment data from database");
+        setCurrentData(null);
+      }
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, []);
+
+  // Initial fetch and auto-refresh synced with Arduino upload rate
+  useFocusEffect(
+    useCallback(() => {
+      fetchData(true); // Show spinner on initial load
+      
+      // Start auto-refresh interval
+      intervalRef.current = setInterval(() => {
+        fetchData(false); // Silent refresh
+      }, AUTO_REFRESH_INTERVAL_MS);
+
+      // Cleanup on blur
+      return () => {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
+    }, [fetchData])
+  );
 
   if (loading) {
     return (

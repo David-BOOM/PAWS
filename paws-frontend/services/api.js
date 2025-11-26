@@ -37,6 +37,7 @@ export const getDashboardData = () => API.get("/dashboard");
 export const setFeedingSchedule = (data) => API.post("/feeding/schedule", data);
 export const triggerQuickAction = (action) => API.post("/actions", { action });
 export const getNotifications = () => API.get("/notifications");
+export const markNotificationsPushed = (times) => API.post("/notifications/mark-pushed", { times });
 export const updateSettings = (data) => API.post("/settings", data);
 
 // Environment data from local JSON database

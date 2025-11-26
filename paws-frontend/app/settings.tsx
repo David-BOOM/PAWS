@@ -15,12 +15,12 @@ const DATABASE_FILES = [
   "environment",
   "feeder-events",
   "feeding-history",
-  "feeding",
   "motion-events",
   "notifications",
   "water-events",
   "weight-history",
 ];
+// Note: settings.json and feeding.json are excluded (user preferences/config)
 
 // Files that should be cleared to empty arrays (list-like data)
 const ARRAY_FILES = [

@@ -1,12 +1,10 @@
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Dimensions, InteractionManager, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, InteractionManager, LayoutChangeEvent, ScrollView, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, G, Line, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import SensorCard from "../components/SensorCard";
 import { useTheme } from "../components/theme";
 import { getEnvironmentCurrent, getEnvironmentSeries } from "../services/api";
-
-const { width: screenWidth } = Dimensions.get("window");
 
 type EnvData = {
   temperature?: number;
@@ -31,7 +29,14 @@ const LineChart = React.memo(function LineChart({
   lineColor: string;
 }) {
   const { colors, effectiveScheme } = useTheme();
-  const width = screenWidth - 32;
+  const [containerWidth, setContainerWidth] = useState(0);
+  
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    setContainerWidth(event.nativeEvent.layout.width);
+  }, []);
+  
+  // Subtract card padding (12px * 2 = 24px) from container width
+  const width = containerWidth > 24 ? containerWidth - 24 : 0;
   const height = 180;
   const pad = { top: 20, right: 16, bottom: 28, left: 36 };
 
@@ -64,42 +69,48 @@ const LineChart = React.memo(function LineChart({
   );
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onLayout={onLayout}>
       <Text style={[styles.cardTitle, { color: colors.text }]}>{title}</Text>
-      <Svg width={width} height={height}>
-        <Rect x={0} y={0} width={width} height={height} fill={effectiveScheme === "dark" ? "#111827" : "#ffffff"} rx={10} />
-        <G>
-          {tickVals.map((v, idx) => {
-            const y = toY(v);
-            return (
-              <G key={`grid-${idx}`}>
-                <Line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={gridColor} strokeWidth={1} />
-                <SvgText x={pad.left - 8} y={y + 4} fill={axisColor} fontSize="10" textAnchor="end">
-                  {Number.isFinite(v) ? v.toFixed(1) : "0.0"}
+      {width > 0 ? (
+        <Svg width={width} height={height}>
+          <Rect x={0} y={0} width={width} height={height} fill={effectiveScheme === "dark" ? "#111827" : "#ffffff"} rx={10} />
+          <G>
+            {tickVals.map((v, idx) => {
+              const y = toY(v);
+              return (
+                <G key={`grid-${idx}`}>
+                  <Line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={gridColor} strokeWidth={1} />
+                  <SvgText x={pad.left - 8} y={y + 4} fill={axisColor} fontSize="10" textAnchor="end">
+                    {Number.isFinite(v) ? v.toFixed(1) : "0.0"}
+                  </SvgText>
+                </G>
+              );
+            })}
+          </G>
+          <G>
+            {[0, Math.floor(series.length / 2), series.length - 1]
+              .filter((i, idx, arr) => i >= 0 && i < series.length && arr.indexOf(i) === idx)
+              .map((i) => (
+                <SvgText key={`x-${i}`} x={toX(i)} y={height - 6} fill={axisColor} fontSize="10" textAnchor="middle">
+                  {series[i].t}
                 </SvgText>
-              </G>
-            );
-          })}
-        </G>
-        <G>
-          {[0, Math.floor(series.length / 2), series.length - 1]
-            .filter((i, idx, arr) => i >= 0 && i < series.length && arr.indexOf(i) === idx)
-            .map((i) => (
-              <SvgText key={`x-${i}`} x={toX(i)} y={height - 6} fill={axisColor} fontSize="10" textAnchor="middle">
-                {series[i].t}
-              </SvgText>
-            ))}
-        </G>
-        <Line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke={axisColor} />
-        <Line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke={axisColor} />
-        <Polyline points={points} fill="none" stroke={lineColor} strokeWidth={2.5} />
-        {series.map((p, i) => (
-          <Circle key={`pt-${i}`} cx={toX(i)} cy={toY(p.v)} r={3} fill={lineColor} />
-        ))}
-        <SvgText x={width - pad.right} y={pad.top - 6} fill={textColor} fontSize="10" textAnchor="end">
-          {unit}
-        </SvgText>
-      </Svg>
+              ))}
+          </G>
+          <Line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke={axisColor} />
+          <Line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke={axisColor} />
+          <Polyline points={points} fill="none" stroke={lineColor} strokeWidth={2.5} />
+          {series.map((p, i) => (
+            <Circle key={`pt-${i}`} cx={toX(i)} cy={toY(p.v)} r={3} fill={lineColor} />
+          ))}
+          <SvgText x={width - pad.right} y={pad.top - 6} fill={textColor} fontSize="10" textAnchor="end">
+            {unit}
+          </SvgText>
+        </Svg>
+      ) : (
+        <View style={{ height, justifyContent: "center", alignItems: "center" }}>
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      )}
     </View>
   );
 });

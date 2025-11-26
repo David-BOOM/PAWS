@@ -1,16 +1,15 @@
 {
   "expo": {
-    "name": "PAWS Pet Care",
+    "name": "paws-frontend",
     "slug": "paws-frontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pawsfrontend",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.paws.petcare",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -18,8 +17,6 @@
       }
     },
     "android": {
-      "package": "com.paws.petcare",
-      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -28,13 +25,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "INTERNET",
-        "VIBRATE",
-        "RECEIVE_BOOT_COMPLETED",
-        "SCHEDULE_EXACT_ALARM",
-        "POST_NOTIFICATIONS"
-      ]
+      "usesCleartextTraffic": true
     },
     "web": {
       "output": "static",
@@ -42,7 +33,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-web-browser",
       [
         "expo-splash-screen",
         {
@@ -54,31 +44,11 @@
             "backgroundColor": "#000000"
           }
         }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/android-icon-foreground.png",
-          "color": "#FF6B35",
-          "sounds": []
-        }
-      ],
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
-        }
       ]
     ],
     "experiments": {
-      "typedRoutes": true
-    },
-    "extra": {
-      "eas": {
-        "projectId": "d17f388c-40b8-4a7a-a4c4-594f754534bf"
-      }
+      "typedRoutes": true,
+      "reactCompiler": true
     }
   }
 }

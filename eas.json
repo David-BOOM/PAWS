@@ -1,6 +1,0 @@
-{
-  "cli": {
-    "version": ">= 3.0.0",
-    "requireCommit": false
-  }
-}

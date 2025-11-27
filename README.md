@@ -31,14 +31,14 @@ graph TD
         MCU[Arduino Microcontroller]
         
         subgraph Sensors
-            Env[Environment<br/>(Temp/Hum/Air)]
-            Weight[Load Cell<br/>(Food Weight)]
+            Env["Environment<br/>(Temp/Hum/Air)"]
+            Weight["Load Cell<br/>(Food Weight)"]
             Water[Water Level]
             Activity[Motion & Sound]
         end
         
         subgraph Actuators
-            Motor[Servo Motor<br/>(Feeder)]
+            Motor["Servo Motor<br/>(Feeder)"]
             Light[LED Light]
         end
     end

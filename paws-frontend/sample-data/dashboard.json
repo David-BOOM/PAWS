@@ -1,0 +1,16 @@
+{
+  "lastMeal": 18,
+  "lastMealTime": "2025-11-18T18:45:00.000Z",
+  "aqi": "Moderate",
+  "temperature": 24,
+  "humidity": 52,
+  "waterLevel": "65%",
+  "deviceStatus": {
+    "status": "Normal",
+    "lightOn": false
+  },
+  "lightOn": false,
+  "feedingTimes": ["07:15", "18:30"],
+  "petWeight": 12.8,
+  "mealAmount": 240
+}

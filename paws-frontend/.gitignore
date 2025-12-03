@@ -1,0 +1,135 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# Cache files
+.cache/
+*.cache
+*.tmp
+*.log
+
+# Expo web cache
+web/cache/
+
+# IDE specific files
+.idea/
+*.iml
+
+# Database mock files
+db.json
+database/
+database/**
+
+# Local dev server logs
+local-db-server.log
+
+# Firebase/Secrets (prevent accidental commits)
+services/firebase.js
+services/firebase.ts
+services/firebase.*.js
+services/firebase.*.ts
+firebase*.json
+secrets/
+secrets/**
+
+# Favicon cache
+assets/images/favicon/
+
+# Environment and secrets
+.env
+.env.development
+.env.production
+.env.test
+.env.*              # any other env variants
+.envrc
+.npmrc
+.yarnrc
+.yarnrc.yml
+credentials.json
+
+# Expo/EAS and mobile credentials
+.expo-shared/
+.expo/dev-tools/
+google-services.json
+GoogleService-Info.plist
+keystore.properties
+*.keystore
+
+# Local databases and storage
+*.sqlite
+*.db
+*.db-shm
+*.db-wal
+*.realm
+*.realm.lock
+*.realm.management
+
+# Tooling caches and test outputs
+coverage/
+.nyc_output/
+.eslintcache
+.prettiercache
+.jest/
+.jest-cache/
+.pnpm-store/
+.turbo/
+.parcel-cache/
+webpack-cache/
+vite.cache/
+storybook-static/
+.storybook-out/
+
+# Editor/IDE
+.vscode/
+.vscode/*
+.fleet/
+*.code-workspace
+.vim/
+
+# OS-specific
+Thumbs.db
+._*
+
+# Hosting/platform folders
+.vercel/
+.netlify/
